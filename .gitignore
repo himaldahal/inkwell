@@ -3,3 +3,9 @@ dist
 server/data
 .DS_Store
 *.log
+.venv
+__pycache__
+*.pyc
+backend/db.sqlite3
+backend/.env
+backend/media
