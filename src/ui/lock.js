@@ -2,6 +2,7 @@ import { getMeta, setMeta, putRecord } from '../core/db.js';
 import { emit, on, toast } from '../core/store.js';
 import { h, openModal, icon } from './dom.js';
 import { getSettings } from '../core/settings.js';
+import { withEye } from './sxkit.js';
 
 /* Passcode gate. A key is derived with PBKDF2 and used to AES-GCM encrypt a known
    token; checking a passcode means decrypting that token. This gates access in the UI
@@ -42,7 +43,7 @@ function passDialog({ title, message, confirm = false, confirmLabel = 'Unlock', 
     const err = h('p', { class: 'form-err', role: 'alert' });
     const m = openModal({
       title, size: 'sm', hideHead: noClose, className: noClose ? 'lockscreen' : '',
-      body: [noClose && h('div', { class: 'lock-ic' }, icon('lock', 28)), noClose && h('h2', { class: 'lock-title' }, title), message && h('p', { class: 'muted-p' }, message), p1, p2, err],
+      body: [noClose && h('div', { class: 'lock-ic' }, icon('lock', 28)), noClose && h('h2', { class: 'lock-title' }, title), message && h('p', { class: 'muted-p' }, message), withEye(p1), p2 && withEye(p2), err],
       actions: [!noClose && { label: 'Cancel', kind: 'ghost' }, {
         label: confirmLabel, kind: 'primary',
         onClick: () => {
