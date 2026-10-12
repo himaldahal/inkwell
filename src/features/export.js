@@ -10,6 +10,9 @@ export { importFiles } from './import.js';
 
 // ---------------------------------------------------------------- rendering
 const GRID = 32;
+const live = (a) => (a || []).filter((x) => x && !x.deleted);
+// map editor brushes onto tools: highlighter/marker/watercolor translucent, unknown brushes pen-like
+const toolOf = (s) => { const b = s.brush || s.tool; return b === 'marker' ? 'highlighter' : b === 'watercolor' ? 'watercolor' : (b === 'highlighter' || b === 'pencil') ? b : 'pen'; };
 
 export function drawTemplate(ctx, w, h, tpl, paper = '#ffffff') {
   ctx.fillStyle = paper || '#ffffff';
@@ -41,7 +44,9 @@ function drawStroke(ctx, s) {
   ctx.save();
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   ctx.strokeStyle = ctx.fillStyle = s.color || '#000';
-  if (s.tool === 'highlighter') {
+  const tool = toolOf(s);
+  if (tool === 'watercolor') ctx.globalAlpha = 0.4;
+  if (tool === 'highlighter') {
     ctx.globalAlpha = 0.35; ctx.globalCompositeOperation = 'multiply';
     ctx.lineCap = 'butt'; ctx.lineWidth = size;
     ctx.beginPath(); ctx.moveTo(p[0], p[1]);
@@ -49,7 +54,7 @@ function drawStroke(ctx, s) {
     for (let i = 1; i < n; i++) ctx.lineTo(p[i * 3], p[i * 3 + 1]);
     ctx.stroke();
   } else {
-    const pencil = s.tool === 'pencil';
+    const pencil = tool === 'pencil';
     if (pencil) ctx.globalAlpha = 0.8;
     const wOf = (pr) => size * (pencil ? 0.5 + 0.8 * pr : 0.35 + 1.3 * pr);
     if (n === 1) {
@@ -159,9 +164,9 @@ export async function renderPageToCanvas(page, note, opts = {}) {
   }
   if (layer !== 'background') {
     ctx.save(); ctx.scale(scale, scale);
-    for (const it of page.items || []) if (it.type === 'image') await drawItem(ctx, it);
-    for (const s of page.strokes || []) drawStroke(ctx, s);
-    for (const it of page.items || []) if (it.type !== 'image') await drawItem(ctx, it);
+    for (const it of live(page.items)) if (it.type === 'image') await drawItem(ctx, it);
+    for (const s of live(page.strokes)) drawStroke(ctx, s);
+    for (const it of live(page.items)) if (it.type !== 'image') await drawItem(ctx, it);
     ctx.restore();
   }
   return c;
@@ -243,7 +248,7 @@ export function strokeOutlinePath(s) {
     pts.push({ x, y, p: p[i + 2] || 0.5 });
   }
   if (pts.length < 2) return null;
-  const hl = s.tool === 'highlighter', pencil = s.tool === 'pencil';
+  const hl = toolOf(s) === 'highlighter', pencil = toolOf(s) === 'pencil';
   // smooth pressure and positions a little
   let w = pts.map((q) => (hl ? size : size * (pencil ? 0.5 + 0.8 * q.p : 0.35 + 1.3 * q.p)));
   w = w.map((v, i) => (i && i < w.length - 1 ? (w[i - 1] + 2 * v + w[i + 1]) / 4 : v));
@@ -382,7 +387,7 @@ async function drawPageItemsAndStrokes(out, pg, page, note, lib, fonts, scale) {
   const W = page.width || 820, H = page.height || 1160, Hp = H * K;
   const extras = []; // items to rasterize on a shared overlay
   // images first (under ink)
-  for (const it of page.items || []) {
+  for (const it of live(page.items)) {
     if (it.type !== 'image') continue;
     let done = false;
     if (!it.rotation) {
@@ -401,11 +406,11 @@ async function drawPageItemsAndStrokes(out, pg, page, note, lib, fonts, scale) {
     if (!done) extras.push(it);
   }
   // ink as vector polygons
-  for (const s of page.strokes || []) {
+  for (const s of live(page.strokes)) {
     const d = strokeOutlinePath(s);
     const c = parseColor(s.color);
-    const hl = s.tool === 'highlighter';
-    const opacity = (hl ? 0.35 : s.tool === 'pencil' ? 0.85 : 1) * c.a;
+    const hl = toolOf(s) === 'highlighter';
+    const opacity = (hl ? 0.35 : toolOf(s) === 'watercolor' ? 0.4 : toolOf(s) === 'pencil' ? 0.85 : 1) * c.a;
     if (d) {
       try { pg.drawSvgPath(d, { x: 0, y: Hp, scale: K, color: rgb(...c.rgb), opacity, borderWidth: 0, blendMode: hl ? BlendMode.Multiply : undefined }); }
       catch { /* skip malformed stroke */ }
@@ -418,7 +423,7 @@ async function drawPageItemsAndStrokes(out, pg, page, note, lib, fonts, scale) {
     }
   }
   // text / shapes
-  for (const it of page.items || []) {
+  for (const it of live(page.items)) {
     if (it.type === 'image') continue;
     const d = it.data || {};
     let done = false;
