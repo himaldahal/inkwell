@@ -10,6 +10,7 @@ import { newNoteDialog, notebookDialog, deleteNotebookFlow, movePicker, quickNot
 import { openPalette } from './palette.js';
 import { createInstallButton } from './install.js';
 import { isStaff, hasUi } from './config.js';
+import { isEnabled, onModuleChange } from '../core/modules.js';
 
 const DT = 'application/x-inkwell';
 export function readDrag(e) {
@@ -105,6 +106,7 @@ export function createSidebar() {
           h('div', { class: 'sb-title' }, h('span', {}, 'Smart filters')),
           SMART.map((f) => navItem({ path: '/smart/' + f.id, label: f.label, ic: f.icon, n: active.filter(f.test).length || '' }))),
         tags.length ? h('div', { class: 'sb-sec' }, h('div', { class: 'sb-title' }, h('span', {}, 'Tags')), tags.map(([t, c]) => navItem({ path: '/tag/' + encodeURIComponent(t), label: t, ic: 'tag', n: c }))) : null),
+      isEnabled('study') ? h('div', { class: 'sb-sec sb-bottom' }, navItem({ path: '/study', label: 'CA Study Hub', ic: 'book' })) : null,
       h('div', { class: 'sb-sec sb-bottom' }, navItem({ path: '/archive', label: 'Archive', ic: 'archive', n: live_.filter((n) => n.archived).length || '' }), navItem({ path: '/trash', label: 'Trash', ic: 'trash', n: (notes.filter((n) => n.trashedAt).length + trashedNbs) || '' })),
       h('div', { class: 'sb-foot' }, createInstallButton({ compact: true }), isStaff() && hasUi('admin') ? h('a', { class: 'nav-item', href: '#/admin', 'data-key': '/admin' }, icon('lock', 18), h('span', { class: 'grow' }, 'Admin')) : null,
       h('a', { class: 'nav-item', href: '#/settings', 'data-key': '/settings' }, icon('settings', 18), h('span', { class: 'grow' }, 'Settings'))));
@@ -123,7 +125,7 @@ export function createSidebar() {
   }
   const applyCollapsed = () => document.documentElement.classList.toggle('sb-collapsed', !!getSettings().sidebarCollapsed);
   const reload = debounce(load, 120);
-  on('account:changed', render);
+  on('account:changed', render); onModuleChange(() => render());
   on('notes:changed', reload); on('notebooks:changed', reload);
   on('route:changed', () => { if (current().name === 'notebook') render(); else mark(); });
   load();

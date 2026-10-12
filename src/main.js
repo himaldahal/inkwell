@@ -15,6 +15,7 @@ import { initAppLock } from './ui/lock.js';
 import * as A from './ui/actions.js';
 import { SHORTCUT_DEFAULTS, comboOf } from './ui/settingsSchema.js';
 import { loadUi, loadConfig, loadAccount } from './ui/config.js';
+import { isEnabled, onModuleChange } from './core/modules.js';
 
 const LIB_ROUTES = new Set(['shared', 'all', 'favorites', 'recent', 'archive', 'trash', 'notebook', 'tag', 'smart', 'search']);
 
@@ -39,7 +40,9 @@ async function boot() {
   main.tabIndex = -1;
   const app = h('div', { class: 'app' }, sidebar.el, main, tabbar);
   const adminPage = h('div', { class: 'page page-admin', hidden: true });
-  main.append(adminPage);
+  const studyPage = h('div', { class: 'page page-study', hidden: true });
+  main.append(adminPage, studyPage);
+  let studyInst = null;
   document.getElementById('app').replaceChildren(skip, offline, app, authScreen, noteScreen, dropOv, announcer);
 
   // ----- routing -----
@@ -75,6 +78,12 @@ async function boot() {
     libPage.hidden = !(lib || inNote || r.name === 'browse');
     setPage.hidden = r.name !== 'settings';
     adminPage.hidden = r.name !== 'admin';
+    studyPage.hidden = r.name !== 'study';
+    if (r.name === 'study') {
+      libPage.hidden = true;
+      if (!isEnabled('study')) { toast('Turn on the CA Study Hub under Settings > Modules'); return navigate('/settings', { replace: true }); }
+      if (!studyInst) studyInst = (async () => (await import('./study/index.js')).mountStudy(studyPage))();
+    }
     if (r.name === 'admin') {
       libPage.hidden = true; adminPage.replaceChildren();
       const m = await loadUi('admin'); const fn = m && (m.mountAdmin || m.mount || m.default);
@@ -104,6 +113,8 @@ async function boot() {
     apply(r);
   });
 
+  onModuleChange((id, on_) => { if (id === 'study' && !on_) { studyInst?.then((i) => i.destroy()); studyInst = null; if (current().name === 'study') navigate('/'); } });
+
   // ----- online/offline -----
   const net = () => { offline.hidden = navigator.onLine; };
   addEventListener('offline', net);
@@ -123,6 +134,7 @@ async function boot() {
     { label: 'Go to Recent', ic: 'clock', run: () => navigate('/recent') },
     { label: 'Go to Archive', ic: 'archive', run: () => navigate('/archive') },
     { label: 'Go to Trash', ic: 'trash', run: () => navigate('/trash') },
+    isEnabled('study') && { label: 'CA Study Hub', ic: 'book', run: () => navigate('/study') },
     { label: 'Open settings', ic: 'settings', run: () => navigate('/settings') },
     { label: 'Toggle sidebar', ic: 'sidebar', hint: 'Ctrl \\', run: toggleSidebar },
     { label: 'Toggle focus (zen) mode', ic: 'focus', hint: 'Ctrl Shift F', run: zen },
