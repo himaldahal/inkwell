@@ -14,10 +14,28 @@ const live = (a) => (a || []).filter((x) => x && !x.deleted);
 // map editor brushes onto tools: highlighter/marker/watercolor translucent, unknown brushes pen-like
 const toolOf = (s) => { const b = s.brush || s.tool; return b === 'marker' ? 'highlighter' : b === 'watercolor' ? 'watercolor' : (b === 'highlighter' || b === 'pencil') ? b : 'pen'; };
 
-export function drawTemplate(ctx, w, h, tpl, paper = '#ffffff') {
+const gradStops = (g) => {
+  if (!g) return null;
+  if (typeof g === 'string') return null;
+  const st = g.stops || [g.from || g.a, g.to || g.b].filter(Boolean).map((c, i, a) => ({ offset: i / Math.max(1, a.length - 1), color: c }));
+  return st.length >= 2 ? { stops: st.map((x, i, a) => (typeof x === 'string' ? { offset: i / (a.length - 1), color: x } : x)), angle: g.angle ?? 180 } : null;
+};
+const paperOf = (page, note) => { const p = page.paper || note.paperColor; return !p || p === 'transparent' ? '#ffffff' : p; };
+
+export function drawTemplate(ctx, w, h, tpl, paper = '#ffffff', page = {}) {
   ctx.fillStyle = paper || '#ffffff';
   ctx.fillRect(0, 0, w, h);
-  const line = 'rgba(120,140,170,0.35)', dot = 'rgba(120,140,170,0.6)';
+  const g = gradStops(page.paperGrad);
+  if (g) {
+    const a = (g.angle - 90) * Math.PI / 180, cx = w / 2, cy = h / 2, r = Math.abs(w * Math.cos(a)) / 2 + Math.abs(h * Math.sin(a)) / 2;
+    const gr = ctx.createLinearGradient(cx - Math.cos(a) * r, cy - Math.sin(a) * r, cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+    g.stops.forEach((s) => { try { gr.addColorStop(Math.min(1, Math.max(0, s.offset)), s.color); } catch { /* bad color */ } });
+    ctx.fillStyle = gr; ctx.fillRect(0, 0, w, h);
+  }
+  const pc = page.pattern?.color ? parseColor(page.pattern.color, [0.47, 0.55, 0.67]) : null;
+  const pa = page.pattern?.opacity;
+  const rgbaOf = (def, a) => (pc ? `rgba(${Math.round(pc.rgb[0] * 255)},${Math.round(pc.rgb[1] * 255)},${Math.round(pc.rgb[2] * 255)},${pa ?? a})` : def);
+  const line = rgbaOf('rgba(120,140,170,0.35)', 0.35), dot = rgbaOf('rgba(120,140,170,0.6)', 0.6);
   ctx.lineWidth = 1; ctx.strokeStyle = line; ctx.fillStyle = dot;
   const hline = (y, x0 = 0, x1 = w) => { ctx.beginPath(); ctx.moveTo(x0, y + 0.5); ctx.lineTo(x1, y + 0.5); ctx.stroke(); };
   const vline = (x, y0 = 0, y1 = h) => { ctx.beginPath(); ctx.moveTo(x + 0.5, y0); ctx.lineTo(x + 0.5, y1); ctx.stroke(); };
@@ -158,7 +176,7 @@ export async function renderPageToCanvas(page, note, opts = {}) {
       } catch (e) { console.warn('pdf page render failed', e); }
     } else {
       ctx.save(); ctx.scale(scale, scale);
-      drawTemplate(ctx, W, H, page.bg || note.template || 'blank', note.paperColor || '#ffffff');
+      drawTemplate(ctx, W, H, page.bg || note.template || 'blank', paperOf(page, note), page);
       ctx.restore();
     }
   }
@@ -269,13 +287,26 @@ export function strokeOutlinePath(s) {
   return d + 'Z';
 }
 
-function pdfTemplate(pg, W, H, tpl, paper, lib) {
+function pdfTemplate(pg, W, H, tpl, paper, lib, page = {}) {
   const { rgb } = lib;
   const P = parseColor(paper, [1, 1, 1]);
+  const pcol = page.pattern?.color ? parseColor(page.pattern.color) : null, pop = page.pattern?.opacity;
   const Wp = W * K, Hp = H * K;
   pg.drawRectangle({ x: 0, y: 0, width: Wp, height: Hp, color: rgb(...P.rgb) });
+  const gs = gradStops(page.paperGrad);
+  if (gs) { // approximate gradient with horizontal bands along its angle's dominant axis
+    const N = 48, a = (gs.angle - 90) * Math.PI / 180, vert = Math.abs(Math.sin(a)) >= Math.abs(Math.cos(a));
+    const at = (t) => { const st = gs.stops; let i = 0; while (i < st.length - 2 && t > st[i + 1].offset) i++; const A = st[i], B = st[i + 1], u = Math.min(1, Math.max(0, (t - A.offset) / ((B.offset - A.offset) || 1))); const ca = parseColor(A.color).rgb, cb = parseColor(B.color).rgb; return ca.map((v, k) => v + (cb[k] - v) * u); };
+    for (let i = 0; i < N; i++) {
+      const t = (i + 0.5) / N, fwd = vert ? Math.sin(a) >= 0 : Math.cos(a) >= 0;
+      const u = fwd ? t : 1 - t;
+      if (vert) pg.drawRectangle({ x: 0, y: Hp - (i + 1) * Hp / N - 0.5, width: Wp, height: Hp / N + 1, color: rgb(...at(u)) });
+      else pg.drawRectangle({ x: i * Wp / N - 0.5, y: 0, width: Wp / N + 1, height: Hp, color: rgb(...at(u)) });
+    }
+  }
+  const PC = pcol ? pcol.rgb : null;
   const line = (x0, y0, x1, y1, col = [0.47, 0.55, 0.67], op = 0.35, th = 0.75) =>
-    pg.drawLine({ start: { x: x0 * K, y: Hp - y0 * K }, end: { x: x1 * K, y: Hp - y1 * K }, thickness: th, color: rgb(...col), opacity: op });
+    pg.drawLine({ start: { x: x0 * K, y: Hp - y0 * K }, end: { x: x1 * K, y: Hp - y1 * K }, thickness: th, color: rgb(...(PC && col[0] === 0.47 ? PC : col)), opacity: pop != null && col[0] === 0.47 ? pop : op });
   const hl = (y, x0 = 0, x1 = W, ...r) => line(x0, y, x1, y, ...r);
   const vl = (x, y0 = 0, y1 = H, ...r) => line(x, y0, x, y1, ...r);
   switch (tpl) {
@@ -283,7 +314,7 @@ function pdfTemplate(pg, W, H, tpl, paper, lib) {
     case 'grid': for (let y = GRID; y < H; y += GRID) hl(y); for (let x = GRID; x < W; x += GRID) vl(x); break;
     case 'dot':
       for (let y = GRID; y < H; y += GRID) for (let x = GRID; x < W; x += GRID)
-        pg.drawCircle({ x: x * K, y: Hp - y * K, size: 1.05, color: rgb(0.47, 0.55, 0.67), opacity: 0.6 });
+        pg.drawCircle({ x: x * K, y: Hp - y * K, size: 1.05, color: rgb(...(PC || [0.47, 0.55, 0.67])), opacity: pop ?? 0.6 });
       break;
     case 'cornell': {
       const cue = Math.round(W * 0.27), sum = Math.round(H * 0.82);
@@ -513,7 +544,7 @@ export async function buildNotePdf(note, opts = {}) {
         pg.drawImage(img, { x: 0, y: 0, width: W * K, height: H * K });
       }
     } else {
-      pdfTemplate(pg, W, H, page.bg || note.template || 'blank', note.paperColor || '#ffffff', L);
+      pdfTemplate(pg, W, H, page.bg || note.template || 'blank', paperOf(page, note), L, page);
     }
     try { await drawPageItemsAndStrokes(out, pg, page, note, L, fonts, scale); }
     catch (e) { console.warn('page annotations failed', e); }
