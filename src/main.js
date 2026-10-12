@@ -109,7 +109,7 @@ async function boot() {
   on('route:changed', (r) => {
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches || getSettings().reducedMotion;
     if (document.startViewTransition && !reduce && !document.querySelector('.backdrop')) {
-      try { document.startViewTransition(() => apply(r)); return; } catch { /* fall through */ }
+      try { const vt = document.startViewTransition(() => apply(r)); [vt.ready, vt.finished, vt.updateCallbackDone].forEach((p_) => p_?.catch?.(() => {})); return; } catch { /* fall through */ }
     }
     apply(r);
   });

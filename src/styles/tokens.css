@@ -43,3 +43,13 @@ input, select, textarea { color-scheme: inherit; }
 input[type="range"], input[type="checkbox"] { accent-color: var(--accent); }
 ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 a:not([class]) { color: var(--accent); }
+
+/* toasts: solid, high-contrast in every theme */
+.toast { background: #1c1c1e; color: #fff; border: 1px solid rgba(255, 255, 255, .14); backdrop-filter: none; box-shadow: var(--shadow-2); }
+.toast.error { background: #a4161a; color: #fff; }
+.toast .toast-msg { color: inherit; font-weight: 500; } .toast .toast-act { background: rgba(255, 255, 255, .18); color: #fff; } .toast .toast-x { color: rgba(255, 255, 255, .85); }
+:root[data-theme="dark"] .toast, :root[data-theme="system"] .toast { background: #f2f2f7; color: #1c1c1e; border-color: rgba(0, 0, 0, .1); }
+:root[data-theme="dark"] .toast .toast-act, :root[data-theme="system"] .toast .toast-act { background: rgba(0, 0, 0, .08); color: #1c1c1e; }
+:root[data-theme="dark"] .toast .toast-x, :root[data-theme="system"] .toast .toast-x { color: rgba(0, 0, 0, .6); }
+:root[data-theme="dark"] .toast.error, :root[data-theme="system"] .toast.error { background: #ff453a; color: #fff; }
+@media (prefers-color-scheme: light) { :root[data-theme="system"] .toast { background: #1c1c1e; color: #fff; border-color: rgba(255, 255, 255, .14); } :root[data-theme="system"] .toast .toast-act { background: rgba(255, 255, 255, .18); color: #fff; } :root[data-theme="system"] .toast .toast-x { color: rgba(255, 255, 255, .85); } :root[data-theme="system"] .toast.error { background: #a4161a; } }

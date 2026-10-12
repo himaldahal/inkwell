@@ -519,3 +519,15 @@ textarea.input { padding: 8px 12px; resize: vertical; user-select: text; }
 .st-front { font-size: 1.2rem; padding: 18px 0; user-select: text; } .st-answer { padding: 12px; border-radius: 12px; background: var(--accent-soft); user-select: text; }
 .exam-mode .sidebar, .exam-mode .tabbar, .exam-mode .sync-pill, .exam-mode .offline-banner, .exam-mode .toasts { display: none !important; } .exam-mode .app { grid-template-columns: minmax(0, 1fr); }
 .page-study { display: block; } .st-tabs { top: 0; }
+
+/* study polish */
+.st-tabs { -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 28px), transparent 100%); mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 28px), transparent 100%); padding-left: 10px; padding-right: 28px; scroll-padding: 0 28px; }
+.st-note { display: flex; gap: 6px; align-items: flex-start; margin: 4px 0; padding: 8px 10px; border-radius: 10px; background: var(--accent-soft); font-size: .8rem; color: var(--text); } .st-note .ic { margin-top: 2px; color: var(--accent); }
+.st-top { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; margin-bottom: 6px; } .st-f.inline { display: flex; align-items: center; gap: 8px; } .st-f.inline .input { width: auto; }
+.st-chips { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; margin: 6px 0; } .st-ok { color: var(--success); font-weight: 600; margin: 6px 0; }
+@media (max-width: 699px) { .st-head { flex-wrap: wrap; } .st-timer { font-size: 3rem; } .st-grid { grid-template-columns: 1fr; } .seg { max-width: 100%; overflow-x: auto; } .st-filter { flex-wrap: wrap; } }
+/* settings modules + admin-ish tabs wrap on narrow widths */
+.set-row { min-width: 0; } .set-lab { min-width: 0; flex: 1 1 200px; } .set-ctl { max-width: 100%; }
+.seg { flex-wrap: wrap; } [class*="tabs"] { max-width: 100%; }
+.sidebar .install { color: var(--text); } .sidebar .install[hidden] { display: none !important; }
+.empty { padding: 40px 20px; }

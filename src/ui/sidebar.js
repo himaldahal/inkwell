@@ -106,7 +106,7 @@ export function createSidebar() {
           h('div', { class: 'sb-title' }, h('span', {}, 'Smart filters')),
           SMART.map((f) => navItem({ path: '/smart/' + f.id, label: f.label, ic: f.icon, n: active.filter(f.test).length || '' }))),
         tags.length ? h('div', { class: 'sb-sec' }, h('div', { class: 'sb-title' }, h('span', {}, 'Tags')), tags.map(([t, c]) => navItem({ path: '/tag/' + encodeURIComponent(t), label: t, ic: 'tag', n: c }))) : null),
-      isEnabled('study') ? h('div', { class: 'sb-sec sb-bottom' }, navItem({ path: '/study', label: 'CA Study Hub', ic: 'book' })) : null,
+      isEnabled('study') ? h('div', { class: 'sb-sec sb-bottom' }, navItem({ path: '/study', label: 'CA Study Hub', ic: 'book' })) : '',
       h('div', { class: 'sb-sec sb-bottom' }, navItem({ path: '/archive', label: 'Archive', ic: 'archive', n: live_.filter((n) => n.archived).length || '' }), navItem({ path: '/trash', label: 'Trash', ic: 'trash', n: (notes.filter((n) => n.trashedAt).length + trashedNbs) || '' })),
       h('div', { class: 'sb-foot' }, createInstallButton({ compact: true }), canSystem() && hasUi('system') ? h('a', { class: 'nav-item', href: '#/system', 'data-key': '/system' }, icon('lock', 18), h('span', { class: 'grow' }, 'System')) : null, isStaff() && hasUi('admin') ? h('a', { class: 'nav-item', href: '#/admin', 'data-key': '/admin' }, icon('lock', 18), h('span', { class: 'grow' }, 'Admin')) : null,
       h('a', { class: 'nav-item', href: '#/settings', 'data-key': '/settings' }, icon('settings', 18), h('span', { class: 'grow' }, 'Settings'))));
