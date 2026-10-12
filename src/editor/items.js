@@ -41,6 +41,7 @@ export function paintItem(el, it, pv) {
     if (!el.classList.contains('ik-editing') && t._html !== it.html) { t.innerHTML = it.html || ''; t._html = it.html; }
     t.style.fontSize = (it.fontSize || 20) + 'px'; t.style.color = it.color || '#111827';
     t.style.textAlign = it.align || 'left'; t.style.fontFamily = it.font || '';
+    s.background = it.bg || ''; s.padding = it.bg ? '12px' : ''; s.borderRadius = it.bg ? '4px' : ''; s.boxShadow = it.sticky ? '0 4px 10px rgba(0,0,0,.25)' : '';
   }
 }
 export function itemRect(pv, it) {

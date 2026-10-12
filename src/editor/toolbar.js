@@ -179,6 +179,9 @@ export function buildToolbar(engine, act) {
     el: bar, opts, refresh, render,
     emojiGrid(onPick, close) {
       const g = h('div', { class: 'ik-emoji' });
+      const notes = h('div', { class: 'ik-colors', style: { gridColumn: '1 / -1', padding: '4px 6px' } }, h('span', { class: 'ik-hint' }, 'Sticky note'),
+        ...['#fde68a', '#fbcfe8', '#bfdbfe', '#bbf7d0', '#fed7aa'].map((col) => h('button', { type: 'button', class: 'ik-sw', style: { background: col }, 'aria-label': 'Sticky note ' + col, onclick: () => { act.sticky(col); close(); } })));
+      g.append(notes);
       EMOJI.forEach((e) => g.append(h('button', { type: 'button', class: 'ik-emo', onclick: () => { onPick(e); close(); } }, e)));
       return g;
     },

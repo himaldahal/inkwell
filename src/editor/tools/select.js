@@ -20,7 +20,10 @@ export function createSelectTool(engine) {
   }
   function select(p, strokes, items) {
     if (S() && S().pv !== p) engine.clearSelection(true);
-    engine.selection = { pv: p, strokes: new Set(strokes), items: new Set(items) };
+    const gs = new Set(strokes), gi = new Set(items);
+    const groups = new Set([...p.page.strokes, ...p.page.items].filter((x) => !x.deleted && x.groupId && (gs.has(x.id) || gi.has(x.id))).map((x) => x.groupId));
+    if (groups.size) { for (const x of p.page.strokes) if (!x.deleted && groups.has(x.groupId)) gs.add(x.id); for (const x of p.page.items) if (!x.deleted && groups.has(x.groupId)) gi.add(x.id); }
+    engine.selection = { pv: p, strokes: gs, items: gi };
     api.renderUI(); engine.emit('selection', engine.selection);
   }
   function begin() {
@@ -32,19 +35,15 @@ export function createSelectTool(engine) {
     box0 = selBox(); moved = false;
   }
   let raf = 0;
-  function apply(f, kx, ky, dx = 0, dy = 0, ax = 0, ay = 0) {
+  function apply(f, sk, itemFn) {
     const page = pv.page, ns = new Map();
     page.strokes = before.strokes.map((st) => {
       const o = orig.strokes.get(st.id); if (!o) return st;
-      const n = xformStroke(o, f, Math.sqrt(Math.abs(kx * ky)) || 1); ns.set(st.id, n); return n;
+      const n = xformStroke(o, f, sk); ns.set(st.id, n); return n;
     });
-    page.items = before.items.map((it) => {
-      const o = orig.items.get(it.id); if (!o) return it;
-      return handle ? withData({ ...o, x: ax + (o.x - ax) * kx, y: ay + (o.y - ay) * ky, w: o.w * kx, h: o.h * ky })
-        : withData({ ...o, x: o.x + dx, y: o.y + dy });
-    });
+    page.items = before.items.map((it) => { const o = orig.items.get(it.id); return o ? withData(itemFn(o)) : it; });
     if (!moved) { moved = true; pv.renderInk(new Set(orig.strokes.keys())); }
-    const live = pv.ctx('live'); pv.clearLive();
+    pv.ctx('live'); pv.clearLive(); const live = pv.ctx('live');
     for (const st of ns.values()) drawStroke(live, st);
     pv.renderItems();
     if (!raf) raf = requestAnimationFrame(() => { raf = 0; api.renderUI(); });
@@ -58,7 +57,7 @@ export function createSelectTool(engine) {
     down(pt) {
       pv = pt.pv; start = pt; moved = false; tapStroke = null; handle = '';
       const hd = pt.e.target.closest?.('[data-handle]')?.dataset.handle;
-      if (hd && S()) { mode = 'resize'; handle = hd; begin(); return; }
+      if (hd && S()) { mode = hd === 'rot' ? 'rotate' : 'resize'; handle = hd; begin(); return; }
       const sel = S(), z = engine.zoom, r = 10 / z;
       const it = engine.itemAt(pv, pt.x, pt.y);
       let hs = null;
@@ -86,7 +85,13 @@ export function createSelectTool(engine) {
       const dx = pt.x - start.x, dy = pt.y - start.y;
       if (mode === 'move') {
         if (!moved && Math.hypot(dx, dy) * engine.zoom < 4) return;
-        apply((x, y) => [x + dx, y + dy], 1, 1, dx, dy);
+        apply((x, y) => [x + dx, y + dy], 1, (o) => ({ ...o, x: o.x + dx, y: o.y + dy }));
+      } else if (mode === 'rotate') {
+        const b = box0, cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
+        let d = Math.atan2(pt.y - cy, pt.x - cx) - Math.atan2(start.y - cy, start.x - cx);
+        const snap = Math.round(d / (Math.PI / 12)) * (Math.PI / 12); if (Math.abs(d - snap) < 0.06) d = snap;
+        const co = Math.cos(d), si = Math.sin(d), rot = (x, y) => [cx + (x - cx) * co - (y - cy) * si, cy + (x - cx) * si + (y - cy) * co];
+        apply(rot, 1, (o) => { const [nx, ny] = rot(o.x + o.w / 2, o.y + o.h / 2); return { ...o, x: nx - o.w / 2, y: ny - o.h / 2, rotation: (o.rotation || 0) + (d * 180) / Math.PI }; });
       } else if (mode === 'resize') {
         const b = box0, west = handle.includes('w'), north = handle.includes('n');
         const ax = west ? b.x1 : b.x0, ay = north ? b.y1 : b.y0, ox = west ? b.x0 : b.x1, oy = north ? b.y0 : b.y1;
@@ -97,8 +102,7 @@ export function createSelectTool(engine) {
           const vx = ox - ax, vy = oy - ay, k = ((pt.x - ax) * vx + (pt.y - ay) * vy) / (vx * vx + vy * vy);
           kx = ky = Math.max(0.05, k);
         }
-        handle = handle || 'se';
-        apply((x, y) => [ax + (x - ax) * kx, ay + (y - ay) * ky], kx, ky, 0, 0, ax, ay);
+        apply((x, y) => [ax + (x - ax) * kx, ay + (y - ay) * ky], Math.sqrt(kx * ky), (o) => ({ ...o, x: ax + (o.x - ax) * kx, y: ay + (o.y - ay) * ky, w: o.w * kx, h: o.h * ky }));
       }
     },
     up(pt) {
@@ -169,6 +173,45 @@ export function createSelectTool(engine) {
       p.renderInk(); p.renderItems();
       if (final) { engine.commit(p, this._rb); this._rb = null; engine.useColor(color); }
     },
+    /** generic mutation of the selected objects: fs(stroke, box), fi(item, box) -> replacement */
+    mutate(fs, fi, keepSel = true) {
+      const s = S(); if (!s) return;
+      const p = s.pv, b = engine.snap(p), box = selBox(), t = Date.now();
+      p.page.strokes = p.page.strokes.map((x) => (!x.deleted && s.strokes.has(x.id) ? { ...fs(x, box), u: t } : x));
+      p.page.items = p.page.items.map((x) => (!x.deleted && s.items.has(x.id) ? withData(fi(x, box)) : x));
+      engine.commit(p, b); p.renderInk(); p.renderItems(); if (keepSel) api.renderUI();
+    },
+    group(on = true) { const g = on ? newId() : undefined; this.mutate((x) => ({ ...x, groupId: g }), (x) => ({ ...x, groupId: g })); },
+    flip(axis) {
+      const f = axis === 'h' ? (b) => (x, y) => [b.x0 + b.x1 - x, y] : (b) => (x, y) => [x, b.y0 + b.y1 - y];
+      this.mutate((x, b) => xformStroke(x, f(b)), (x, b) => (axis === 'h' ? { ...x, x: b.x0 + b.x1 - x.x - x.w } : { ...x, y: b.y0 + b.y1 - x.y - x.h }));
+    },
+    align(dir) {
+      const s = S(); if (!s) return; const box = selBox(), pvv = s.pv;
+      const off = (r) => ({ left: [box.x0 - r.x0, 0], right: [box.x1 - r.x1, 0], hc: [(box.x0 + box.x1) / 2 - (r.x0 + r.x1) / 2, 0], top: [0, box.y0 - r.y0], bottom: [0, box.y1 - r.y1], vc: [0, (box.y0 + box.y1) / 2 - (r.y0 + r.y1) / 2] }[dir]);
+      this.mutate((x) => { const [dx, dy] = off(bboxOf(x)); return xformStroke(x, (a, c) => [a + dx, c + dy]); },
+        (x) => { const [dx, dy] = off({ x0: x.x, x1: x.x + x.w, y0: x.y, y1: x.y + x.h }); return { ...x, x: x.x + dx, y: x.y + dy }; });
+    },
+    order(front) {
+      const s = S(); if (!s) return;
+      const p = s.pv, b = engine.snap(p), ns = [], ni = [];
+      const strokes = p.page.strokes.map((x) => { if (x.deleted || !s.strokes.has(x.id)) return x; const c = { ...x, id: newId(), u: Date.now() }; ns.push(c); return tomb(x); });
+      const items = p.page.items.map((x) => { if (x.deleted || !s.items.has(x.id)) return x; const c = { ...x, id: newId() }; ni.push(withData(c)); return tomb(x); });
+      p.page.strokes = front ? [...strokes, ...ns] : [...ns, ...strokes]; p.page.items = front ? [...items, ...ni] : [...ni, ...items];
+      engine.commit(p, b); p.renderInk(); p.renderItems(); select(p, ns.map((x) => x.id), ni.map((x) => x.id));
+    },
+    moreMenu(anchor) {
+      const s = S(); if (!s) return;
+      const grouped = [...s.pv.page.strokes, ...s.pv.page.items].some((x) => !x.deleted && x.groupId && (s.strokes.has(x.id) || s.items.has(x.id)));
+      engine.emit('menu', { anchor, items: [
+        { label: grouped ? 'Ungroup' : 'Group', icon: 'layout', run: () => api.group(!grouped) },
+        { title: 'Align' },
+        ...[['left', 'Left'], ['hc', 'Center'], ['right', 'Right'], ['top', 'Top'], ['vc', 'Middle'], ['bottom', 'Bottom']].map(([d, n]) => ({ label: n, icon: 'minus', run: () => api.align(d) })),
+        { title: 'Arrange' },
+        { label: 'Flip horizontal', icon: 'columns', run: () => api.flip('h') }, { label: 'Flip vertical', icon: 'layout', run: () => api.flip('v') },
+        { label: 'Bring to front', icon: 'up', run: () => api.order(true) }, { label: 'Send to back', icon: 'down', run: () => api.order(false) },
+      ] });
+    },
     toTyped() {
       const s = S(); if (!s) return;
       const its = s.pv.page.items.filter((x) => !x.deleted && s.items.has(x.id) && x.type === 'text');
@@ -188,7 +231,7 @@ export function createSelectTool(engine) {
       const b = selBox(); if (!b) return;
       const z = engine.zoom;
       const box = h('div', { class: 'ik-selbox', style: { left: b.x0 * z + 'px', top: b.y0 * z + 'px', width: (b.x1 - b.x0) * z + 'px', height: (b.y1 - b.y0) * z + 'px' } });
-      for (const hd of ['nw', 'ne', 'sw', 'se']) box.append(h('div', { class: 'ik-handle ' + hd, 'data-handle': hd }));
+      for (const hd of ['nw', 'ne', 'sw', 'se', 'rot']) box.append(h('div', { class: 'ik-handle ' + hd, 'data-handle': hd }));
       const hasText = [...s.items].some((id) => p.page.items.find((i) => i.id === id)?.type === 'text');
       const col = h('input', { type: 'color', class: 'ik-selcolor', title: 'Color', 'aria-label': 'Recolor' });
       col.addEventListener('input', () => api.recolor(col.value, false));
@@ -197,6 +240,7 @@ export function createSelectTool(engine) {
       const bar = h('div', { class: 'ik-selbar', 'data-ik-ui': '' },
         mk('copy', 'Duplicate', () => api.duplicate()), mk('doc', 'Copy', () => api.copy()), col,
         hasText ? mk('type', 'Convert to typed notes', () => api.toTyped()) : null,
+        mk('more', 'More: group, align, flip, order', (e) => api.moreMenu(e.currentTarget)),
         mk('trash', 'Delete', () => api.delete()));
       const barTop = b.y0 * z - 46;
       bar.style.left = Math.max(4, Math.min(p.w * z - 200, b.x0 * z)) + 'px';

@@ -38,6 +38,8 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
     onLocalOp(cb) { opCbs.add(cb); return () => opCbs.delete(cb); },
     onLocalPresence(cb) { presCbs.add(cb); return () => presCbs.delete(cb); },
     setPresence(peers) { lastPeers = peers || []; eng?.setPresence(lastPeers); setAvatars(lastPeers); },
+    get note() { return eng?.note; },
+    get engine() { return eng; },
     destroy() { destroyed = true; cleanup.forEach((f) => { try { f(); } catch (e) { console.error(e); } }); cleanup = []; root.remove(); },
   };
   init().catch((e) => { console.error(e); root.replaceChildren(h('div', { class: 'ik-missing' }, 'Could not open this note.')); });
@@ -218,10 +220,12 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       stickers: stickerPop,
       toggleRuler: () => { ruler.toggle(); tb.refresh(); },
       toggleOptions: () => root.classList.toggle('ik-opt-open'),
+      sticky: (c) => engine.insertSticky(c),
       textColor: (c) => { const ed = engine.editing; if (!ed) return; const sel = getSelection(); if (sel && !sel.isCollapsed && ed.t.contains(sel.anchorNode)) engine.fmt('foreColor', c); else ed.t.style.color = c; },
       textSize: (v) => { if (engine.editing) engine.editing.t.style.fontSize = v + 'px'; },
     });
     engine.on('ruler', () => tb.refresh());
+    engine.on('menu', ({ anchor, items }) => menu(anchor, items, { align: 'start' }));
     cleanup.push(() => tb.destroy());
 
     root.append(header, tb.el, tb.opts, main, recbar, imgInput, pdfInput,

@@ -7,6 +7,7 @@ import { PageView } from './pages.js';
 import { cloneStroke, bboxOf, tomb, alive, drawStroke, getAuthor } from './stroke.js';
 import { withData } from './items.js';
 import { seedUrl } from './assets.js';
+import { icon } from './icons.js';
 import { pref, clamp } from './ui.js';
 import { createPenTool } from './tools/pen.js';
 import { createEraserTool } from './tools/eraser.js';
@@ -180,7 +181,7 @@ export class Engine {
     }
     return out;
   }
-  _target(c, dir) { return dir === 'undo' ? c.b || tomb(c.a) : c.a; }
+  _target(c, dir) { const t = dir === 'undo' ? c.b || tomb(c.a) : c.a; return t.deleted ? t : { ...t, u: Date.now() }; }
   _applyCh(page, ch, dir) {
     for (const k of ['strokes', 'items']) {
       const list = page[k].slice(); let any = false;
@@ -212,7 +213,7 @@ export class Engine {
     const i = list.findIndex((x) => x.id === r.id);
     if (i < 0) { list.push(r); return 'add'; }
     const l = list[i];
-    if (l.deleted) return null;
+    if (l.deleted) { if (!r.deleted && (r.u || 0) > (l.u || 0)) { list[i] = r; return 'set'; } return null; }
     if (r.deleted || (r.u || 0) > (l.u || 0)) { list[i] = r; return 'set'; }
     return null;
   }
@@ -238,7 +239,7 @@ export class Engine {
         if (r) { page.strokes = list; t.full = true; }
       } else if (op.type === 'item-upsert' || op.type === 'item-del') {
         if (this.editing && this.editing.id === d.id) continue;
-        const list = page.items.slice(), r = this._upsert(list, op.type === 'item-del' ? { id: d.id, type: 'text', x: 0, y: 0, w: 1, h: 1, deleted: true, u: Date.now() } : d);
+        const list = page.items.slice(), ex = list.find((x) => x.id === d.id), r = this._upsert(list, op.type === 'item-del' ? { ...tomb(ex || { id: d.id, type: 'text', x: 0, y: 0, w: 1, h: 1 }), u: Date.now() } : d);
         if (r) { page.items = list; t.items = true; }
       } else if (op.type === 'text') this.emit('remoteText', d);
     }
@@ -445,14 +446,34 @@ export class Engine {
     this.addItem(pv, { id: newId(), type: 'sticker', emoji, x: c.x - s / 2, y: c.y - s / 2, w: s, h: s, rotation: 0 });
     this.setTool('select');
   }
-  insertTextBox(pv, x, y, html = '', text = '') {
+  insertTextBox(pv, x, y, html = '', text = '', extra = {}) {
     const fs = this.settings.text.fontSize, col = this.settings.text.color;
-    const it = withData({ id: newId(), type: 'text', x, y, w: 280, h: Math.round(fs * 1.6), rotation: 0, html, text, fontSize: fs, color: col, font: this.settings.text.font });
+    const it = withData({ id: newId(), type: 'text', x, y, w: 280, h: Math.round(fs * 1.6), rotation: 0, html, text, fontSize: fs, color: col, font: this.settings.text.font, ...extra });
     const before = this.snap(pv);
     pv.page.items = [...pv.page.items, it]; pv.renderItems();
     this.startEdit(pv, it.id, before);
     return it;
   }
+
+  insertSticky(color = '#fde68a') {
+    const pv = this.currentPv(), c = this.visibleCenter(pv);
+    const it = this.insertTextBox(pv, c.x - 110, c.y - 100, '', '', { w: 220, h: 200, bg: color, sticky: true, color: '#1f2937' });
+    return it;
+  }
+  showRadial(cx, cy) {
+    this.hideRadial();
+    const r = this.wrap.getBoundingClientRect(), ring = h('div', { class: 'ik-radial', 'data-ik-ui': '', style: { left: cx - r.left + 'px', top: cy - r.top + 'px' } });
+    const list = ['pen', 'highlighter', 'eraser', 'select', 'text', 'shape', 'laser', 'hand'];
+    list.forEach((t, i) => {
+      const a = (i / list.length) * 6.2832 - 1.5708, b = h('button', { type: 'button', title: t, 'aria-label': t, style: { left: Math.cos(a) * 78 + 'px', top: Math.sin(a) * 78 + 'px', animationDelay: i * 18 + 'ms' } });
+      b.append(icon(t, 22)); b.addEventListener('click', () => { this.setTool(t); this.hideRadial(); });
+      ring.append(b);
+    });
+    this.wrap.append(ring); this._radial = ring; navigator.vibrate?.(10);
+    this._radialOff = (e) => { if (!ring.contains(e.target)) this.hideRadial(); };
+    setTimeout(() => document.addEventListener('pointerdown', this._radialOff, true), 0);
+  }
+  hideRadial() { this._radial?.remove(); this._radial = null; document.removeEventListener('pointerdown', this._radialOff, true); }
 
   // ---- page operations ----
   _pagesCmd(fn, recordProps) {
@@ -552,7 +573,7 @@ export class Engine {
     on(s, 'pointerup', (e) => this._up(e));
     on(s, 'pointercancel', (e) => this._up(e, true));
     on(s, 'pointerleave', () => this._hideCursor());
-    on(s, 'contextmenu', (e) => e.preventDefault());
+    on(s, 'contextmenu', (e) => { e.preventDefault(); if (!this.readOnly) this.showRadial(e.clientX, e.clientY); });
     on(s, 'wheel', (e) => {
       if (!e.ctrlKey && !e.metaKey) return;
       e.preventDefault(); this.setZoom(this.zoom * Math.exp(-e.deltaY * 0.0022), e.clientX, e.clientY);
@@ -603,6 +624,14 @@ export class Engine {
     e.preventDefault();
     this.lastClient = { x: e.clientX, y: e.clientY };
     tl.down(this._mk(e, pv));
+    clearTimeout(this._lp);
+    if (['select', 'text', 'laser'].includes(this._tool()) && !e.target.closest?.('[data-handle]')) {
+      const x0 = e.clientX, y0 = e.clientY;
+      this._lp = setTimeout(() => {
+        if (this.mode !== 'tool' || Math.hypot(this.lastClient.x - x0, this.lastClient.y - y0) > 8) return;
+        tl.cancel?.(); this.mode = null; this.activeId = null; this._autoscrollStop(); this.showRadial(x0, y0);
+      }, 600);
+    }
     this._autoscrollStart();
   }
   _move(e) {
@@ -633,6 +662,7 @@ export class Engine {
     if (this.presCbs.size) this._hover(e);
   }
   _up(e, cancel) {
+    clearTimeout(this._lp);
     if (e.pointerType === 'pen') this.penDown = false;
     if (e.pointerType === 'touch' && this.touches.has(e.pointerId)) {
       this.touches.delete(e.pointerId);
