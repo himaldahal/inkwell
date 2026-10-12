@@ -29,7 +29,7 @@ export default defineConfig({
         globPatterns: ['**/*.{js,mjs,css,html,wasm,bcmap,ttf,otf,woff,woff2,pfb,svg,png,ico,webmanifest,json,txt}'],
         maximumFileSizeToCacheInBytes: 32 * 1024 * 1024,
         navigateFallback: 'index.html',
-        navigateFallbackDenylist: [/^\/api\//, /^\/admin\//, /^\/django-static\//, /^\/share-target/],
+        navigateFallbackDenylist: [/^\/api\//, /^\/admin\//, /^\/django-static\//, /^\/share-target/, /^\/s\//],
         cleanupOutdatedCaches: true,
         clientsClaim: false, // new versions activate only after the user accepts the update toast
         skipWaiting: false,

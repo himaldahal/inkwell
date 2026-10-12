@@ -2,10 +2,12 @@ import os
 import re
 
 from django.conf import settings
-from django.db.models import Sum
 from django.http import FileResponse, HttpResponse, JsonResponse
 
-from .models import AssetBlob
+from django.contrib.auth import get_user_model
+
+from . import access, quota
+from .models import AssetBlob, Profile
 from .util import api, err
 
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
@@ -28,6 +30,21 @@ def asset(request, asset_id):
     if not ID_RE.match(asset_id):
         return err("bad asset id")
     user = request.user
+    owner_id = request.GET.get("owner")
+    if owner_id and owner_id != str(user.pk):  # shared note's attachment
+        try:
+            oid = int(owner_id)
+        except ValueError:
+            return err("bad owner")
+        if request.method == "PUT":
+            role = access.role_for(user, oid, "assets", asset_id, parent_id=request.headers.get("X-Note-Id", ""))
+            if role != "editor":
+                return err("forbidden", 403)
+        elif request.method == "DELETE" or not access.role_for(user, oid, "assets", asset_id):
+            return err("not found", 404)
+        user = get_user_model().objects.filter(pk=oid).first()
+        if not user:
+            return err("not found", 404)
     if request.method == "PUT":
         return _put(request, user, asset_id)
     if request.method == "DELETE":
@@ -56,10 +73,10 @@ def _put(request, user, asset_id):
     if size > settings.ASSET_MAX_BYTES:
         return err("asset too large", 413)
     existing = AssetBlob.objects.filter(user=user, asset_id=asset_id).first()
-    used = AssetBlob.objects.filter(user=user).aggregate(s=Sum("size"))["s"] or 0
-    used -= existing.size if existing else 0
-    if settings.ASSET_QUOTA_BYTES and used + size > settings.ASSET_QUOTA_BYTES:
-        return err("storage quota exceeded", 413, quotaBytes=settings.ASSET_QUOTA_BYTES, usedBytes=used)
+    used = quota.used_bytes(user) - (existing.size if existing else 0)
+    q = Profile.of(user).quota_bytes()
+    if q and used + size > q:
+        return err("storage quota exceeded", 413, quotaBytes=q, usedBytes=used)
     p = _path(user, asset_id)
     p.parent.mkdir(parents=True, exist_ok=True)
     tmp = p.with_suffix(".part")

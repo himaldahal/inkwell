@@ -17,3 +17,30 @@ class RecordAdmin(admin.ModelAdmin):
 class TokenAdmin(admin.ModelAdmin):
     list_display = ("user", "device", "created_at", "last_used", "expires_at")
     exclude = ("key_hash",)
+
+from .models import AuditLog, EmailToken, Plan, Profile, PublicLink, Share  # noqa: E402
+
+admin.site.register(Plan)
+admin.site.register(Share)
+
+
+@admin.register(Profile)
+class ProfileAdmin(admin.ModelAdmin):
+    list_display = ("user", "plan", "storage_mb_override", "max_notes_override", "email_verified", "must_change_password")
+    list_filter = ("plan", "email_verified")
+
+
+@admin.register(PublicLink)
+class PublicLinkAdmin(admin.ModelAdmin):
+    list_display = ("owner", "title", "views", "revoked", "expires_at", "updated_at")
+    exclude = ("text_html", "password_hash")
+
+
+@admin.register(AuditLog)
+class AuditLogAdmin(admin.ModelAdmin):
+    list_display = ("created_at", "event", "user", "actor", "detail", "ip")
+    list_filter = ("event",)
+    readonly_fields = [f.name for f in AuditLog._meta.fields]
+
+
+admin.site.register(EmailToken, admin.ModelAdmin)

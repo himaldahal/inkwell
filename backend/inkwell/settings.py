@@ -80,7 +80,33 @@ if env_bool("TRUST_PROXY", False):
     USE_X_FORWARDED_HOST = True
 
 # ---- Inkwell specific -------------------------------------------------------
-ALLOW_REGISTRATION = env_bool("ALLOW_REGISTRATION", True)
+DEPLOYMENT_MODE = "commercial" if env("DEPLOYMENT_MODE", "internal").strip().lower() == "commercial" else "internal"
+# internal: accounts are created by staff only. commercial: public sign-up.
+ALLOW_REGISTRATION = env_bool("ALLOW_REGISTRATION", DEPLOYMENT_MODE == "commercial")
+APP_URL = env("APP_URL", "").rstrip("/")  # public https origin used in e-mail links; derived from the request if blank
+DEFAULT_NOTE_LIMIT = env_int("DEFAULT_NOTE_LIMIT", 0)  # 0 = unlimited (editable per plan in admin)
+SHARE_RATE_LIMIT = env_int("SHARE_RATE_LIMIT", 30)  # share-by-email invitations per hour per user
+PUBLIC_VIEW_RATE = env_int("PUBLIC_VIEW_RATE", 120)  # public page views per minute per IP
+PUBLIC_PASSWORD_ATTEMPTS = env_int("PUBLIC_PASSWORD_ATTEMPTS", 8)  # per 10 minutes per IP+link
+PUBLIC_MAX_ASSET_BYTES = env_int("PUBLIC_MAX_ASSET_MB", 25) * 1024 * 1024
+PUBLIC_MAX_PAGES = env_int("PUBLIC_MAX_PAGES", 200)
+PUBLIC_MAX_TEXT_BYTES = env_int("PUBLIC_MAX_TEXT_MB", 2) * 1024 * 1024
+EMAIL_TOKEN_TTL_HOURS = env_int("EMAIL_TOKEN_TTL_HOURS", 24)
+EMAIL_RESEND_SECONDS = env_int("EMAIL_RESEND_SECONDS", 60)
+
+# ---- E-mail (all via env). Without EMAIL_HOST mail is printed to the console/log.
+EMAIL_HOST = env("EMAIL_HOST", "")
+EMAIL_PORT = env_int("EMAIL_PORT", 587)
+EMAIL_HOST_USER = env("EMAIL_USER", env("EMAIL_HOST_USER", ""))
+EMAIL_HOST_PASSWORD = env("EMAIL_PASSWORD", env("EMAIL_HOST_PASSWORD", ""))
+EMAIL_USE_SSL = env_bool("EMAIL_USE_SSL", False)
+EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", not EMAIL_USE_SSL)
+EMAIL_TIMEOUT = 15
+DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER or "Inkwell <noreply@localhost>")
+SERVER_EMAIL = DEFAULT_FROM_EMAIL
+SMTP_ENABLED = bool(EMAIL_HOST)
+EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend" if SMTP_ENABLED else "django.core.mail.backends.console.EmailBackend"
+REQUIRE_EMAIL_VERIFICATION = env_bool("REQUIRE_EMAIL_VERIFICATION", DEPLOYMENT_MODE == "commercial" and SMTP_ENABLED)
 ASSET_QUOTA_BYTES = env_int("ASSET_QUOTA_MB", 2048) * 1024 * 1024  # 0 = unlimited
 ASSET_MAX_BYTES = env_int("ASSET_MAX_MB", 200) * 1024 * 1024
 MAX_PUSH_BYTES = env_int("MAX_PUSH_MB", 25) * 1024 * 1024
@@ -202,7 +228,13 @@ WHITENOISE_MANIFEST_STRICT = False
 WHITENOISE_USE_FINDERS = DEBUG
 WHITENOISE_AUTOREFRESH = DEBUG
 WHITENOISE_IMMUTABLE_FILE_TEST = lambda path, url: "/assets/" in url  # noqa: E731
-WHITENOISE_ADD_HEADERS_FUNCTION = "inkwell.headers.add_headers"
+def _add_headers(headers, path, url):
+    from inkwell.headers import add_headers
+
+    add_headers(headers, path, url)
+
+
+WHITENOISE_ADD_HEADERS_FUNCTION = _add_headers
 
 DATA_UPLOAD_MAX_MEMORY_SIZE = MAX_PUSH_BYTES
 FILE_UPLOAD_MAX_MEMORY_SIZE = 2 * 1024 * 1024

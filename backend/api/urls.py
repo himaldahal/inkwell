@@ -1,9 +1,10 @@
 from django.urls import path
 
-from . import views_assets, views_auth, views_sync
+from . import views_admin, views_assets, views_auth, views_share, views_sync
 
 urlpatterns = [
     path("health", views_sync.health),
+    path("config", views_auth.config),
     path("auth/register", views_auth.register),
     path("auth/login", views_auth.login),
     path("auth/logout", views_auth.logout),
@@ -11,10 +12,26 @@ urlpatterns = [
     path("auth/me", views_auth.me),
     path("auth/password", views_auth.change_password),
     path("auth/delete", views_auth.delete_account),
+    path("auth/export", views_auth.export_data),
+    path("auth/verify", views_auth.verify),
+    path("auth/resend", views_auth.resend),
+    path("auth/forgot", views_auth.forgot),
+    path("auth/reset", views_auth.reset),
+    path("auth/email", views_auth.change_email),
     path("devices", views_auth.devices),
     path("devices/<str:device_id>", views_auth.device_detail),
     path("sync/pull", views_sync.pull),
     path("sync/push", views_sync.push),
     path("assets", views_assets.asset_list),
     path("assets/<str:asset_id>", views_assets.asset),
+    path("shared", views_share.shared_with_me),
+    path("share/people", views_share.people),
+    path("share/people/<int:share_id>", views_share.person),
+    path("share/public", views_share.public_link),
+    path("share/public/<str:token>/asset/<str:key>", views_share.public_asset),
+    path("admin/users", views_admin.users),
+    path("admin/users/<int:uid>", views_admin.user_detail),
+    path("admin/users/<int:uid>/reset", views_admin.reset_password),
+    path("admin/audit", views_admin.audit_log),
+    path("admin/stats", views_admin.stats),
 ]

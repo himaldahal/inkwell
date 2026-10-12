@@ -77,8 +77,9 @@ def authenticate(request):
     return t
 
 
-def api(methods=("GET",), auth=True):
-    """CSRF-exempt token API view with method check, auth and light rate limiting."""
+def api(methods=("GET",), auth=True, staff=False, pw_ok=False):
+    """CSRF-exempt token API view with method check, auth and light rate limiting.
+    staff=True: administrators only. pw_ok=True: reachable while a password change is still required."""
 
     def deco(fn):
         @csrf_exempt
@@ -95,6 +96,13 @@ def api(methods=("GET",), auth=True):
                 if not hit(f"tok:{t.pk}", settings.RATE_LIMIT_API, 60):
                     return err("rate limited", 429)
                 request.user, request.token = t.user, t
+                if staff and not t.user.is_staff:
+                    return err("forbidden", 403)
+                if not pw_ok:
+                    from .models import Profile
+
+                    if Profile.of(t.user).must_change_password:
+                        return err("password change required", 403, code="password-change-required")
             return fn(request, *a, **kw)
 
         return wrapper

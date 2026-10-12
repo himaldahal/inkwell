@@ -14,7 +14,7 @@ def j(r):
     return json.loads(r.content)
 
 
-@override_settings(MEDIA_ROOT=__import__("pathlib").Path(TMP))
+@override_settings(MEDIA_ROOT=__import__("pathlib").Path(TMP), ALLOW_REGISTRATION=True)
 class Base(TestCase):
     def setUp(self):
         cache.clear()
@@ -251,14 +251,18 @@ class AssetTests(Base):
         self.assertEqual(self.put(t, "../etc", b"x").status_code, 404)
         self.assertEqual(self.put(t, "bad id", b"x").status_code, 400)
 
-    @override_settings(ASSET_QUOTA_BYTES=1000)
     def test_quota(self):
+        from .models import Profile
+
         t = self.register()
-        self.assertEqual(self.put(t, "a", b"x" * 600).status_code, 200)
-        self.assertEqual(self.put(t, "b", b"x" * 600).status_code, 413)
-        self.assertEqual(self.put(t, "a", b"x" * 900).status_code, 200)  # replace counts net
+        Profile.objects.update_or_create(user__username="alice", defaults={"user": __import__("django.contrib.auth", fromlist=["x"]).get_user_model().objects.get(username="alice"), "storage_mb_override": 1})
+        mb = 1024 * 1024
+        self.assertEqual(self.put(t, "a", b"x" * (600 * 1024)).status_code, 200)
+        self.assertEqual(self.put(t, "b", b"x" * (600 * 1024)).status_code, 413)
+        self.assertEqual(self.put(t, "a", b"x" * (900 * 1024)).status_code, 200)  # replace counts net
         used = j(self.get("/api/auth/me", t))["usage"]["assetBytes"]
-        self.assertEqual(used, 900)
+        self.assertEqual(used, 900 * 1024)
+        self.assertEqual(j(self.get("/api/auth/me", t))["usage"]["quotaBytes"], mb)
 
     @override_settings(ASSET_MAX_BYTES=10)
     def test_max_size(self):
