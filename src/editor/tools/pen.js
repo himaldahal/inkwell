@@ -20,7 +20,7 @@ export function createPenTool(engine, kind) {
     const r = recognizeShape(s.pts); if (!r) return;
     clearPred();
     snapped = true; s.pts = r.pts; s.shape = r.kind; redrawActive();
-    navigator.vibrate?.(8);
+    engine.buzz(8);
   }
   return {
     cursor: 'crosshair',
@@ -29,12 +29,12 @@ export function createPenTool(engine, kind) {
       latched = false;
       if (engine.ruler?.on) { engine.applyRuler(pt); latched = !!pt.snapped; }
       s = { id: newId(), tool: kind, color: c.color, size: c.size, pts: [pt.x, pt.y, pt.p] };
-      pm = kind === 'highlighter' || (c.alpha ?? 1) < 1; curve = c.curve || 1;
+      pm = kind === 'highlighter' || (c.alpha ?? 1) < 1; curve = c.curve || engine.prefs.curve || 1;
       if ((c.alpha ?? 1) < 1) s.alpha = c.alpha;
       if (kind === 'highlighter' && c.chisel) s.chisel = true;
       if (c.taper != null && kind === 'pen') s.taper = c.taper;
       if (kind === 'pen' && c.brush && c.brush !== 'fine') s.brush = c.brush;
-      stab = c.stab || 0;
+      stab = c.stab ?? engine.prefs.smoothing ?? 0;
       lastP = pt.p; snapped = false; drawn = 0; predBox = null;
       ink = pv.ctx('ink'); live = pv.ctx('live');
       anchor = pt;

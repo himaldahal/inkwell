@@ -2,10 +2,12 @@
 import { h } from '../core/utils.js';
 import { popover } from './ui.js';
 import { toast } from '../core/store.js';
+import { getSetting } from '../core/settings.js';
 
 export const ttsSupported = () => 'speechSynthesis' in window;
 export const dictationSupported = () => !!(window.SpeechRecognition || window.webkitSpeechRecognition);
-const pr = { rate: 1, pitch: 1, voice: '' };
+const gs = (k, d) => { try { const v = getSetting(k); return v == null ? d : v; } catch { return d; } };
+const pr = { get rate() { return this._r ?? gs('voice.rate', 1); }, set rate(v) { this._r = v; }, get pitch() { return this._p ?? gs('voice.pitch', 1); }, set pitch(v) { this._p = v; }, get voice() { return this._v ?? ''; }, set voice(v) { this._v = v; } };
 
 function textMap(root) {
   const nodes = [], w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT); let text = '', n;
@@ -37,7 +39,7 @@ export function speak(src, { onEnd } = {}) {
   if (!text.trim()) { toast('Nothing to read'); onEnd?.(); return; }
   const u = new SpeechSynthesisUtterance(text);
   u.rate = pr.rate; u.pitch = pr.pitch;
-  const v = speechSynthesis.getVoices().find((x) => x.voiceURI === pr.voice); if (v) u.voice = v;
+  const vn = pr.voice || gs('voice.name', ''), v = speechSynthesis.getVoices().find((x) => x.voiceURI === vn || x.name === vn); if (v) u.voice = v;
   u.onboundary = (e) => {
     if (!map || !CSS.highlights || e.name === 'sentence') return;
     const r = rangeFor(map, (map.base || 0) + e.charIndex, e.charLength || 6); if (r) CSS.highlights.set('ik-read', new Highlight(r));
@@ -69,7 +71,7 @@ export function toggleDictation(target, onState) {
   if (rec) { rec.stop(); return; }
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { toast('Dictation is not supported in this browser'); return; }
-  const r = new SR(); r.continuous = true; r.interimResults = true; r.lang = navigator.language || 'en-US';
+  const r = new SR(); r.continuous = true; r.interimResults = true; r.lang = gs('voice.dictLang', '') || navigator.language || 'en-US';
   let span = null;
   const clear = () => { span?.remove(); span = null; };
   r.onresult = (ev) => {

@@ -15,6 +15,7 @@ import { icon } from './icons.js';
 import { ibtn, popover, menu, closePopover, pref } from './ui.js';
 import { releaseAssets, getImage } from './assets.js';
 import { clipboard } from './tools/select.js';
+import { getSetting } from '../core/settings.js';
 import { setAuthor } from './stroke.js';
 
 // optional modules owned by other agents; glob tolerates their absence at build time
@@ -160,6 +161,15 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
     cleanup.push(() => textLayer.destroy());
     engine.on('appendTyped', (html) => { textLayer.append(html); if (view === 'ink') setView(wide() ? 'split' : view); });
 
+    const applyTyping = () => { engine.applyPrefs(); const t = engine.typing; textLayer.el.spellcheck = t.spell; textLayer.el.setAttribute('autocorrect', t.autocorrect ? 'on' : 'off'); engine.onResize(); };
+    applyTyping(); cleanup.push(busOn('settings:changed', applyTyping));
+    if (!engine._hadSaved) {
+      const g = (k) => { try { return getSetting(k); } catch { return undefined; } };
+      const sd = { pen: { color: g('pen.color'), size: g('pen.size') }, highlighter: { color: g('editor.highlighter.color'), size: g('editor.highlighter.size') }, eraser: { size: g('editor.eraser.size'), mode: g('editor.eraser.mode') } };
+      for (const k in sd) { const o = Object.fromEntries(Object.entries(sd[k]).filter(([, v]) => v != null)); if (Object.keys(o).length) Object.assign(engine.settings[k], o); }
+      if (g('editor.snap') === false) { engine.settings.pen.snap = false; engine.settings.highlighter.snap = false; }
+      if (engine.typing?.size) engine.settings.text.fontSize = Math.max(14, engine.typing.size + 3);
+    }
     // ---------- header ----------
     const title = h('input', { class: 'ik-title', type: 'text', value: note.title || '', placeholder: 'Untitled', 'aria-label': 'Note title', maxlength: 200, enterkeyhint: 'done' });
     title.readOnly = readOnly;
@@ -373,6 +383,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
         { label: 'Pages panel', icon: 'sidebar', run: () => toggleSide() },
         { label: 'Fit width', icon: 'fit', run: () => engine.fitWidth() },
         { label: 'Focus mode (F)', icon: 'focus', run: () => toggleFocus(true) },
+        { label: 'Present (fullscreen + laser)', icon: 'laser', run: () => { toggleFocus(true); engine.setTool('laser'); engine.fitWidth(); root.requestFullscreen?.().catch(() => {}); } },
         { label: ref ? 'Close reference note' : 'Reference note (side by side)', icon: 'columns', run: () => toggleRef() },
         '-',
         { label: rec ? 'Recording...' : 'Record audio', icon: 'mic', run: () => setTimeout(() => recClick(anchor), 0) },

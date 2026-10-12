@@ -8,6 +8,7 @@ import { cloneStroke, bboxOf, tomb, alive, drawStroke, getAuthor } from './strok
 import { withData } from './items.js';
 import { seedUrl } from './assets.js';
 import { icon } from './icons.js';
+import { getSetting } from '../core/settings.js';
 import { pref, clamp } from './ui.js';
 import { createPenTool } from './tools/pen.js';
 import { createEraserTool } from './tools/eraser.js';
@@ -32,7 +33,7 @@ export const DRAW_TOOLS = ['pen', 'highlighter', 'pencil', 'shape'];
 
 export class Engine {
   constructor({ note, root, scroll, pagesEl, wrap, readOnly }) {
-    this.readOnly = !!readOnly; this.opCbs = new Set(); this.presCbs = new Set(); this.peers = []; this._remote = false;
+    this.prefs = {}; this.readOnly = !!readOnly; this.opCbs = new Set(); this.presCbs = new Set(); this.peers = []; this._remote = false;
     this.note = note; this.root = root; this.scroll = scroll; this.pagesEl = pagesEl; this.wrap = wrap;
     this.listeners = {};
     this.pvs = []; this.byEl = new Map();
@@ -43,7 +44,7 @@ export class Engine {
       export: lazy(() => import('../features/export.js')),
     };
     this.media.audio().then((m) => { this.audioMod = m; });
-    const saved = pref.get('tools', {});
+    const saved = pref.get('tools', {}); this._hadSaved = !!Object.keys(saved).length;
     this.settings = {};
     for (const k of Object.keys(DEFAULTS)) this.settings[k] = typeof DEFAULTS[k] === 'object' ? { ...DEFAULTS[k], ...(saved[k] || {}) } : saved[k] || DEFAULTS[k];
     this.settings.tool = DEFAULTS.tool;
@@ -60,9 +61,27 @@ export class Engine {
     this.io = new IntersectionObserver((es) => {
       for (const e of es) { const pv = this.byEl.get(e.target); if (pv) pv.setVisible(e.isIntersecting); }
     }, { root: scroll, rootMargin: '120% 0px 120% 0px' });
+    this.applyPrefs();
     this._bind();
     this.rebuild();
   }
+
+  // ---- user settings (core/settings.js) ----
+  applyPrefs() {
+    const g = (k, d) => { let v; try { v = getSetting(k); } catch { /* settings not ready */ } return v == null ? d : v; };
+    const p = this.prefs;
+    p.palm = g('editor.palmRejection', 'auto'); p.input = g('editor.inputMode', 'any'); p.smoothing = g('editor.smoothing', 0) / 100 * 0.85;
+    p.curve = { soft: 0.7, normal: 1, firm: 1.5 }[g('editor.pressureCurve', 'normal')] || 1;
+    p.zoom = g('editor.zoom', 'pinch'); p.autoScroll = g('editor.autoScroll', true) !== false; p.twoFinger = g('editor.twoFinger', 'pan-zoom');
+    p.haptics = g('editor.haptics', true) !== false; p.autoHide = !!g('editor.toolbarAutoHide', false); p.horiz = g('editor.scrollDir', 'vertical') === 'horizontal';
+    const R = this.root;
+    R.dataset.tbpos = g('editor.toolbarPos', 'top'); R.classList.toggle('ik-left', !!g('editor.leftHanded', false));
+    this.pagesEl.classList.toggle('ik-horiz', p.horiz);
+    this.typing = { font: { sans: '', serif: 'Georgia, "Times New Roman", serif', mono: 'ui-monospace, Menlo, Consolas, monospace' }[g('typing.font', 'sans')] || '', size: g('typing.size', 17), spell: g('typing.spellcheck', true) !== false, autocorrect: !!g('typing.autocorrect', false) };
+    R.style.setProperty('--ik-typing-font', this.typing.font || 'inherit'); R.style.setProperty('--ik-typing-size', this.typing.size + 'px');
+    if (p.zoom === 'fit-width' && !this._fitSet) { this._fitSet = true; this.fit = true; }
+  }
+  buzz(ms = 6) { if (this.prefs.haptics !== false) navigator.vibrate?.(ms); }
 
   // ---- events ----
   on(evt, fn) { (this.listeners[evt] ||= new Set()).add(fn); return () => this.listeners[evt].delete(fn); }
@@ -76,7 +95,7 @@ export class Engine {
   setTool(t) {
     if (this.readOnly) t = 'hand';
     if (t === this.settings.tool) return;
-    navigator.vibrate?.(6);
+    this.buzz(6);
     this.endEdit();
     if (this.settings.tool === 'select' && t !== 'select') this.clearSelection();
     this.tools[this.settings.tool]?.deactivate?.();
@@ -120,9 +139,9 @@ export class Engine {
   }
   currentPv() { return this.pvs[this.cur] || this.pvs[0]; }
   updateCurrent(force) {
-    const r = this.scroll.getBoundingClientRect(), mid = r.top + Math.min(r.height * 0.4, 300);
+    const r = this.scroll.getBoundingClientRect(), H = this.prefs.horiz, mid = H ? r.left + r.width * 0.4 : r.top + Math.min(r.height * 0.4, 300);
     let idx = 0;
-    for (let i = 0; i < this.pvs.length; i++) { if (this.pvs[i].el.getBoundingClientRect().top <= mid) idx = i; }
+    for (let i = 0; i < this.pvs.length; i++) { const b = this.pvs[i].el.getBoundingClientRect(); if ((H ? b.left : b.top) <= mid) idx = i; }
     if (idx !== this.cur || force) {
       this.cur = idx; this.emit('page', { index: idx, count: this.pvs.length, id: this.pvs[idx]?.page.id });
     }
@@ -130,7 +149,7 @@ export class Engine {
   goToPage(i, smooth = true) {
     const pv = this.pvs[clamp(i, 0, this.pvs.length - 1)]; if (!pv) return;
     const r = pv.el.getBoundingClientRect(), s = this.scroll.getBoundingClientRect();
-    this.scroll.scrollTo({ top: this.scroll.scrollTop + r.top - s.top - 12, behavior: smooth ? 'smooth' : 'auto' });
+    this.scroll.scrollTo(this.prefs.horiz ? { left: this.scroll.scrollLeft + r.left - s.left - 12, behavior: smooth ? 'smooth' : 'auto' } : { top: this.scroll.scrollTop + r.top - s.top - 12, behavior: smooth ? 'smooth' : 'auto' });
   }
 
   // ---- zoom ----
@@ -375,7 +394,7 @@ export class Engine {
     this.clearSelection();
     const t = el.firstChild;
     el.classList.add('ik-editing'); el.setAttribute('data-ik-ui', '');
-    t.contentEditable = 'true'; t.spellcheck = true;
+    t.contentEditable = 'true'; t.spellcheck = this.typing?.spell !== false; t.setAttribute('autocorrect', this.typing?.autocorrect ? 'on' : 'off');
     t.focus({ preventScroll: true });
     const sel = getSelection(); sel.selectAllChildren(t); sel.collapseToEnd();
     const ed = { pv, id, el, t, before: before || this.snap(pv), isNew };
@@ -448,6 +467,7 @@ export class Engine {
   }
   insertTextBox(pv, x, y, html = '', text = '', extra = {}) {
     const fs = this.settings.text.fontSize, col = this.settings.text.color;
+    if (this.typing && !this.settings.text.font && this.typing.font) extra = { font: this.typing.font, ...extra };
     const it = withData({ id: newId(), type: 'text', x, y, w: 280, h: Math.round(fs * 1.6), rotation: 0, html, text, fontSize: fs, color: col, font: this.settings.text.font, ...extra });
     const before = this.snap(pv);
     pv.page.items = [...pv.page.items, it]; pv.renderItems();
@@ -469,7 +489,7 @@ export class Engine {
       b.append(icon(t, 22)); b.addEventListener('click', () => { this.setTool(t); this.hideRadial(); });
       ring.append(b);
     });
-    this.wrap.append(ring); this._radial = ring; navigator.vibrate?.(10);
+    this.wrap.append(ring); this._radial = ring; this.buzz(10);
     this._radialOff = (e) => { if (!ring.contains(e.target)) this.hideRadial(); };
     setTimeout(() => document.addEventListener('pointerdown', this._radialOff, true), 0);
   }
@@ -576,7 +596,7 @@ export class Engine {
     on(s, 'contextmenu', (e) => { e.preventDefault(); if (!this.readOnly) this.showRadial(e.clientX, e.clientY); });
     on(s, 'wheel', (e) => {
       if (!e.ctrlKey && !e.metaKey) return;
-      e.preventDefault(); this.setZoom(this.zoom * Math.exp(-e.deltaY * 0.0022), e.clientX, e.clientY);
+      e.preventDefault(); if (this.prefs.zoom !== 'locked') this.setZoom(this.zoom * Math.exp(-e.deltaY * 0.0022), e.clientX, e.clientY);
     }, { passive: false });
     on(s, 'scroll', throttle(() => { this.updateCurrent(); this.renderSelection(); }, 80), { passive: true });
     on(document, 'keyup', (e) => { if (e.key === ' ') { this.spaceDown = false; this.root.classList.remove('ik-space'); } });
@@ -603,13 +623,15 @@ export class Engine {
     if (e.pointerType === 'pen') { if (!this.penSeen) { this.penSeen = true; pref.set('penSeen', true); this.emit('penseen'); } this.penDown = true; }
     const tool = this.settings.tool;
     if (e.pointerType === 'touch') {
-      if (this.penDown) return;                        // palm while the pen is down
-      if (e.width > 70 && e.height > 70 && this.penSeen) return; // big contact = palm
+      const palm = this.prefs.palm !== 'off';
+      if (palm && this.penDown) return;                        // palm while the pen is down
+      if (palm && e.width > 70 && e.height > 70 && this.penSeen) return; // big contact = palm
       this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now() });
+      if (this.touches.size === 2 && this.prefs.twoFinger === 'none') return;
       if (this.touches.size === 2) { this._startGesture(); try { this.scroll.setPointerCapture(e.pointerId); } catch { /* ignore */ } e.preventDefault(); return; }
       if (this.touches.size === 3) { this.mode = 'three'; this.three = { x: [...this.touches.values()].reduce((a, t) => a + t.x, 0) / 3, d: 0 }; return; }
       if (this.touches.size > 3) return;
-      const fingerPans = tool === 'hand' || (this.penSeen && !['select', 'text'].includes(tool));
+      const fingerPans = tool === 'hand' || (!['select', 'text'].includes(tool) && ((this.penSeen && palm) || this.prefs.input === 'pencil-only')) || (this.prefs.palm === 'strict' && this.penSeen);
       if (fingerPans) { this._startPan(e); return; }
     } else if (e.pointerType === 'mouse') {
       if (e.button === 1 || this.spaceDown || tool === 'hand') { this._startPan(e); e.preventDefault(); return; }
@@ -625,6 +647,7 @@ export class Engine {
     this.lastClient = { x: e.clientX, y: e.clientY };
     tl.down(this._mk(e, pv));
     clearTimeout(this._lp);
+    if (this.prefs.autoHide) this.root.classList.add('ik-drawing');
     if (['select', 'text', 'laser'].includes(this._tool()) && !e.target.closest?.('[data-handle]')) {
       const x0 = e.clientX, y0 = e.clientY;
       this._lp = setTimeout(() => {
@@ -662,7 +685,7 @@ export class Engine {
     if (this.presCbs.size) this._hover(e);
   }
   _up(e, cancel) {
-    clearTimeout(this._lp);
+    clearTimeout(this._lp); this.root.classList.remove('ik-drawing');
     if (e.pointerType === 'pen') this.penDown = false;
     if (e.pointerType === 'touch' && this.touches.has(e.pointerId)) {
       this.touches.delete(e.pointerId);
@@ -706,9 +729,9 @@ export class Engine {
     const [a, b] = [...this.touches.values()];
     const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2, d = Math.hypot(a.x - b.x, a.y - b.y);
     if (!g.moved && (Math.hypot(a.x - a.sx, a.y - a.sy) > 14 || Math.hypot(b.x - b.sx, b.y - b.sy) > 14)) g.moved = true;
-    if (!g.moved) return;
+    if (!g.moved || this.prefs.twoFinger === 'undo') return;
     this.scroll.scrollLeft -= cx - g.cx; this.scroll.scrollTop -= cy - g.cy;
-    if (g.d > 10 && d > 10) this.setZoom(this.zoom * (d / g.d), cx, cy);
+    if (g.d > 10 && d > 10 && this.prefs.zoom !== 'locked') this.setZoom(this.zoom * (d / g.d), cx, cy);
     g.cx = cx; g.cy = cy; g.d = d;
   }
   _cursor(e) {
@@ -723,7 +746,7 @@ export class Engine {
 
   // auto-scroll when drawing near the viewport edge
   _autoscrollStart() {
-    if (this._asRaf) return;
+    if (this._asRaf || this.prefs.autoScroll === false) return;
     const tick = () => {
       this._asRaf = 0;
       if (this.mode !== 'tool' || !this.lastClient || !DRAW_TOOLS.concat(['eraser', 'select']).includes(this._tool())) return;

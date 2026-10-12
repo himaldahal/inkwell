@@ -262,3 +262,16 @@
 .ik-handle.rot { left: 50%; top: -28px; cursor: grab; background: var(--ik-accent); }
 ::highlight(ik-read) { background: color-mix(in srgb, var(--accent, #ff9f0a) 45%, transparent); color: inherit; }
 .ik-interim { color: var(--ik-muted); font-style: italic; }
+.ik-rich { font-family: var(--ik-typing-font, inherit); font-size: var(--ik-typing-size, 17px); }
+.ik-pages.ik-horiz { flex-direction: row; align-items: flex-start; width: max-content; padding: calc(var(--ik-top) + 14px) 20px 130px; }
+.ik-drawing .ik-toolbar, .ik-drawing .ik-options { opacity: .12; pointer-events: none; transition: opacity .2s; }
+.ik-toolbar, .ik-options { transition: opacity .25s; }
+.ik-root:not(.ik-phone)[data-tbpos="bottom"] .ik-toolbar { top: auto; bottom: 16px; }
+.ik-root:not(.ik-phone)[data-tbpos="bottom"] .ik-options { top: auto; bottom: 80px; }
+.ik-root:not(.ik-phone)[data-tbpos="bottom"] .ik-fab { bottom: 84px; }
+.ik-root:not(.ik-phone)[data-tbpos="left"] .ik-toolbar, .ik-root:not(.ik-phone)[data-tbpos="right"] .ik-toolbar { top: 70px; transform: none; flex-direction: column; max-width: none; max-height: calc(100% - 90px); }
+.ik-root:not(.ik-phone)[data-tbpos="left"] .ik-toolbar { left: 12px; } .ik-root:not(.ik-phone)[data-tbpos="right"] .ik-toolbar { left: auto; right: 12px; }
+.ik-root:not(.ik-phone)[data-tbpos="left"] .ik-tools, .ik-root:not(.ik-phone)[data-tbpos="right"] .ik-tools { flex-direction: column; overflow-y: auto; }
+.ik-root:not(.ik-phone)[data-tbpos="left"] .ik-histbtns, .ik-root:not(.ik-phone)[data-tbpos="right"] .ik-histbtns { margin: 4px 0 0; padding: 4px 0 0; border-left: 0; border-top: 1px solid var(--ik-border); }
+.ik-root:not(.ik-phone)[data-tbpos="left"] .ik-options { left: 80px; transform: none; top: 70px; } .ik-root:not(.ik-phone)[data-tbpos="right"] .ik-options { left: auto; right: 80px; transform: none; top: 70px; }
+.ik-left .ik-main { flex-direction: row-reverse; } .ik-left .ik-fab.zoom { right: auto; left: 16px; } .ik-left .ik-side { border-right: 0; border-left: 1px solid var(--ik-border); }
