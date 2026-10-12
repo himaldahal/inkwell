@@ -4,6 +4,8 @@ import { stripHtml } from '../core/utils.js';
 import { getSettings } from '../core/settings.js';
 import { PRESETS, SMART } from './templates.js';
 
+/** safe tag list: strings only, no empty or 'null' entries */
+export const tagsOf = (n) => (Array.isArray(n?.tags) ? [...new Set(n.tags.filter((t) => typeof t === 'string' && t.trim() && t !== 'null' && t !== 'undefined').map((t) => t.trim()))] : []);
 const TRASH_DAYS = 60;
 export const TRASH_MS = TRASH_DAYS * 864e5;
 
@@ -108,7 +110,7 @@ export async function renameNote(id, title) {
 }
 export async function applyTags(notes, add, remove) {
   await patchNotes(idsOf(notes), (n) => {
-    const set = new Set(n.tags || []);
+    const set = new Set(tagsOf(n));
     add.forEach((t) => set.add(t)); remove.forEach((t) => set.delete(t));
     n.tags = [...set];
   });

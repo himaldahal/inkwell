@@ -25,7 +25,7 @@ export const setCommands = (fn) => { commandsProvider = fn; };
 export async function openPalette(initial = '') {
   const all = (await getAll('notes')).filter((n) => !n.trashedAt);
   const nbs = await A.getNotebooks();
-  const tags = [...new Set(all.flatMap((n) => n.tags || []))];
+  const tags = [...new Set(all.flatMap((n) => A.tagsOf(n)))];
   const input = h('input', { class: 'pal-in', type: 'text', placeholder: 'Search notes, notebooks, tags or type a command', role: 'combobox', 'aria-expanded': 'true', 'aria-controls': 'pal-list', 'aria-label': 'Command palette', autocomplete: 'off', value: initial });
   const listEl = h('div', { class: 'pal-list', id: 'pal-list', role: 'listbox' });
   let results = [], sel = 0;
@@ -39,7 +39,7 @@ export async function openPalette(initial = '') {
     if (!q) { out.push(...cmds.slice(0, 6)); }
     else out.push(...cmds.sort((a, b) => b.s - a.s).slice(0, cmdOnly ? 12 : 4));
     if (!cmdOnly) {
-      const ns = all.map((n) => ({ n, s: Math.max(fuzzy(q, n.title || 'Untitled') * 1.5, isNoteLocked(n) ? -1 : fuzzy(q, n.textIndex || '') - 20, fuzzy(q, (n.tags || []).join(' ')) - 10) }))
+      const ns = all.map((n) => ({ n, s: Math.max(fuzzy(q, n.title || 'Untitled') * 1.5, isNoteLocked(n) ? -1 : fuzzy(q, n.textIndex || '') - 20, fuzzy(q, A.tagsOf(n).join(' ')) - 10) }))
         .filter((x) => !q || x.s >= 0).sort((a, b) => (q ? b.s - a.s : b.n.updatedAt - a.n.updatedAt)).slice(0, q ? 8 : 5);
       out.push(...ns.map(({ n }) => ({ kind: 'Note', ic: n.lock ? 'lock' : 'file', label: n.title || 'Untitled', sub: fmtDate(n.updatedAt), run: () => navigate('/note/' + encodeURIComponent(n.id)) })));
       if (q) {

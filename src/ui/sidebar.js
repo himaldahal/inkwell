@@ -78,7 +78,7 @@ export function createSidebar() {
     const counts = new Map();
     for (const n of live_.filter((x) => !x.archived)) { let c = nbs.find((b) => b.id === n.notebookId); let g = 0; while (c && g++ < 20) { counts.set(c.id, (counts.get(c.id) || 0) + 1); c = nbs.find((b) => b.id === c.parentId); } }
     const tagMap = new Map();
-    for (const n of live_.filter((x) => !x.archived)) for (const t of n.tags || []) tagMap.set(t, (tagMap.get(t) || 0) + 1);
+    for (const n of live_.filter((x) => !x.archived)) for (const t of A.tagsOf(n)) tagMap.set(t, (tagMap.get(t) || 0) + 1);
     const tags = [...tagMap.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
     const active = live_.filter((n) => !n.archived);
 

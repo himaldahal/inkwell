@@ -116,10 +116,10 @@ export async function tagDialog(notes) {
   for (const n of notes) objs.push(typeof n === 'string' ? await getRecord('notes', n) : n);
   const list = objs.filter(Boolean);
   const all = await getAll('notes');
-  const known = [...new Set(all.flatMap((n) => n.tags || []))].sort();
+  const known = [...new Set(all.flatMap((n) => A.tagsOf(n)))].sort();
   const state = new Map(); const init = new Map();
   for (const t of known) {
-    const c = list.filter((n) => (n.tags || []).includes(t)).length;
+    const c = list.filter((n) => A.tagsOf(n).includes(t)).length;
     const v = c === 0 ? 'none' : c === list.length ? 'all' : 'some';
     state.set(t, v); init.set(t, v);
   }
