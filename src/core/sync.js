@@ -7,6 +7,11 @@ import { on, emit, toast } from './store.js';
 import { getSetting, getSettings, updateSettings } from './settings.js';
 import { debounce } from './utils.js';
 import * as cx from './crypto.js';
+import { HttpError, getBackend } from './backend.js';
+import './backends/django.js';
+import './backends/none.js';
+
+export { HttpError };
 
 const KINDS = ['notebooks', 'notes', 'assets'];
 const PUSH_BATCH = 100;
@@ -51,39 +56,24 @@ const deviceName = () => {
 };
 const base = (a) => ((a?.serverUrl || '').trim().replace(/\/+$/, ''));
 
-export class HttpError extends Error {
-  constructor(status, msg, body) { super(msg || 'HTTP ' + status); this.status = status; this.body = body; this.code = body?.code; }
-}
-
-async function http(auth, path, { method = 'GET', json, body, headers = {}, timeout = 30000, noAuth = false, signal } = {}) {
-  const ctl = new AbortController();
-  const t = setTimeout(() => ctl.abort(), timeout);
-  signal?.addEventListener('abort', () => ctl.abort());
-  const h = { ...headers };
-  if (auth?.token && !noAuth) h.Authorization = 'Bearer ' + auth.token;
-  if (json !== undefined) { h['Content-Type'] = 'application/json'; body = JSON.stringify(json); }
+const B = () => getBackend();
+/** run an adapter call and track the server clock offset from its `serverTime` */
+async function timed(fn) {
   const t0 = Date.now();
-  let res;
-  try { res = await fetch(base(auth) + path, { method, headers: h, body, signal: ctl.signal, credentials: 'omit' }); }
-  finally { clearTimeout(t); }
+  const data = await fn(await B());
   const t1 = Date.now();
-  if (res.status === 304) return { res, data: null };
-  let data = null;
-  if ((res.headers.get('Content-Type') || '').includes('json')) { try { data = await res.json(); } catch { /* ignore */ } }
-  if (!res.ok) throw new HttpError(res.status, data?.error || res.statusText, data);
   if (data?.serverTime) { const off = data.serverTime - (t0 + t1) / 2; offsetMs = offsetMs ? offsetMs * 0.5 + off * 0.5 : off; }
-  return { res, data };
+  return data;
 }
 
-/** Authenticated API call for the UI modules (auth, share, admin, presence...). Returns parsed JSON. */
+/** Authenticated backend-specific call for the UI modules (presence, sharing, admin...). Returns parsed JSON. */
 export async function apiCall(path, opts = {}) {
   const auth = await getAuth();
-  const { data } = await http(auth, path, opts);
-  return data;
+  return (await B()).call(auth, path, opts);
 }
 export async function getConfig(force = false) {
   if (cfg && !force) return cfg;
-  try { cfg = await apiCall('/api/config', { noAuth: true, timeout: 8000 }); await setMeta('sync:config', cfg); }
+  try { cfg = await (await B()).config(await getAuth()); await setMeta('sync:config', cfg); }
   catch { cfg = (await getMeta('sync:config', null)) || { mode: 'internal', registrationOpen: false, features: {} }; }
   return cfg;
 }
@@ -95,7 +85,8 @@ export async function getMe() {
 
 export async function signIn({ serverUrl = '', email, password, displayName, register = false, code, remember, website = '', elapsedMs, pow }) {
   const auth0 = { serverUrl };
-  const data = await apiCallRaw(auth0, register ? '/api/auth/register' : '/api/auth/login', {
+  const be = await B();
+  const data = await (register ? be.register : be.login).call(be, auth0, {
     email, password, displayName, code, remember, website, elapsedMs, pow,
     deviceId: await getDeviceId(), deviceName: deviceName(),
   });
@@ -109,11 +100,10 @@ export async function signIn({ serverUrl = '', email, password, displayName, reg
   scheduleSoon(0, true);
   return { user: data.user, mustChangePassword: !!data.mustChangePassword };
 }
-const apiCallRaw = async (auth, path, json) => (await http(auth, path, { method: 'POST', json, noAuth: true })).data;
 
 export async function signOut() {
   const a = await getAuth();
-  if (a?.token) { try { await http(a, '/api/auth/logout', { method: 'POST', timeout: 8000 }); } catch { /* offline: token just expires */ } }
+  if (a?.token) { try { await (await B()).logout(a); } catch { /* offline: token just expires */ } }
   await saveAuth(null);
   await setMeta('sync:cursor', '0');
   await setMeta('sync:lastSync', null);
@@ -122,24 +112,24 @@ export async function signOut() {
   await refreshPending();
 }
 export async function setServerUrl(url) { const a = (await getAuth()) || {}; await saveAuth({ ...a, serverUrl: (url || '').trim() }); }
-export const getAccountInfo = () => apiCall('/api/auth/me').then(async (d) => { const a = await getAuth(); if (a && d?.user) await saveAuth({ ...a, user: d.user }); return d; });
+export const getAccountInfo = async () => (await B()).me(await getAuth()).then(async (d) => { const a = await getAuth(); if (a && d?.user) await saveAuth({ ...a, user: d.user }); return d; });
 export async function changePassword(oldPassword, newPassword) {
-  await apiCall('/api/auth/password', { method: 'POST', json: { oldPassword, newPassword } });
+  await (await B()).changePassword(await getAuth(), oldPassword, newPassword);
   const a = await getAuth(); if (a) await saveAuth({ ...a, mustChange: false });
 }
 export async function deleteAccount(password) {
-  await apiCall('/api/auth/delete', { method: 'POST', json: { password } });
+  await (await B()).deleteAccount(await getAuth(), password);
   await saveAuth(null); await setMeta('sync:cursor', '0');
   setState({ state: 'idle', lastSync: null, error: null });
   emit('auth:changed', { user: null });
 }
-export const listDevices = () => apiCall('/api/devices').then((d) => d.devices);
-export const revokeDevice = (id) => apiCall('/api/devices/' + encodeURIComponent(id), { method: 'DELETE' });
-export const checkServer = (url) => http({ serverUrl: url }, '/api/health', { noAuth: true, timeout: 8000 }).then((r) => r.data);
-export const updateProfile = (patch) => apiCall('/api/auth/me', { method: 'PATCH', json: patch }).then(getAccountInfoCache);
+export const listDevices = async () => (await B()).listDevices(await getAuth());
+export const revokeDevice = async (id) => (await B()).revokeDevice(await getAuth(), id);
+export const checkServer = async (url) => (await B()).health(url);
+export const updateProfile = async (patch) => (await B()).updateProfile(await getAuth(), patch).then(getAccountInfoCache);
 async function getAccountInfoCache(d) { const a = await getAuth(); if (a && d?.user) await saveAuth({ ...a, user: d.user }); return d; }
 export async function uploadAvatar(blob) {
-  await apiCall('/api/auth/avatar', { method: 'PUT', body: blob, headers: { 'Content-Type': blob.type } });
+  await (await B()).uploadAvatar(await getAuth(), blob);
   return getAccountInfo();
 }
 /** Fetch an avatar as an object URL (requires auth header, so it cannot be a plain <img src>). */
@@ -148,10 +138,9 @@ export async function avatarUrl(id) {
   if (!id) return null;
   if (avatarCache.has(id)) return avatarCache.get(id);
   try {
-    const a = await getAuth();
-    const res = await fetch(base(a) + '/api/avatar/' + encodeURIComponent(id), { headers: { Authorization: 'Bearer ' + a.token } });
-    if (!res.ok) return null;
-    const u = URL.createObjectURL(await res.blob()); avatarCache.set(id, u); return u;
+    const blob = await (await B()).fetchBlob(await getAuth(), '/api/avatar/' + encodeURIComponent(id));
+    if (!blob) return null;
+    const u = URL.createObjectURL(blob); avatarCache.set(id, u); return u;
   } catch { return null; }
 }
 
@@ -211,8 +200,6 @@ async function wireRecord(kind, rec, key, uploaded) {
   return w;
 }
 
-const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
-const q = (rec) => (rec.sharedOwnerId ? '?owner=' + encodeURIComponent(rec.sharedOwnerId) : '');
 
 async function uploadBlob(auth, rec, key) {
   const enc = !!key && !rec.sharedOwnerId;
@@ -223,29 +210,12 @@ async function uploadBlob(auth, rec, key) {
   if (rec.noteId) headers['X-Note-Id'] = rec.noteId;
   const total = bytes.length, ctl = new AbortController();
   progress(rec.id, { dir: 'up', loaded: 0, total, ctl });
-  try {
-    if (total <= CHUNK * 2) {
-      await http(auth, '/api/assets/' + encodeURIComponent(rec.id) + q(rec), { method: 'PUT', body: bytes, headers, timeout: 180000, signal: ctl.signal });
-    } else { // resumable: PATCH chunks with Content-Range, verify sha256 on the last one
-      const sha = hex(await crypto.subtle.digest('SHA-256', bytes));
-      let off = 0;
-      try { off = (await http(auth, `/api/assets/${encodeURIComponent(rec.id)}/upload`)).data.offset || 0; } catch { off = 0; }
-      if (off >= total) off = 0;
-      while (off < total) {
-        const end = Math.min(off + CHUNK, total);
-        const h = { ...headers, 'Content-Range': `bytes ${off}-${end - 1}/${total}` };
-        if (end === total) h['X-Upload-Sha256'] = sha;
-        try {
-          await http(auth, '/api/assets/' + encodeURIComponent(rec.id) + q(rec), { method: 'PATCH', body: bytes.subarray(off, end), headers: h, timeout: 120000, signal: ctl.signal });
-        } catch (e) { if (e.status === 409 && e.body?.offset != null) { off = e.body.offset; continue; } throw e; }
-        off = end; progress(rec.id, { loaded: off });
-      }
-    }
-  } finally { progress(rec.id, null); }
+  try { await (await B()).uploadAsset(auth, rec, bytes, { headers, signal: ctl.signal, onProgress: (n) => progress(rec.id, { loaded: n }) }); }
+  finally { progress(rec.id, null); }
 }
 
 async function flushBatch(auth, key, batch, snap) {
-  const { data } = await http(auth, '/api/sync/push', { method: 'POST', json: { deviceId: await getDeviceId(), records: batch }, timeout: 60000 });
+  const data = await timed(async (be) => be.push(auth, { deviceId: await getDeviceId(), records: batch }));
   for (const acc of data.accepted || []) {
     const s = snap.get(acc.kind + ':' + acc.id);
     const cur = await getRecord(acc.kind, acc.id);
@@ -356,8 +326,7 @@ async function pullAll(auth, key, { wait = false } = {}) {
   if (typeof cursor === 'number') cursor = '0';
   const touched = new Set();
   for (let guard = 0; guard < 500; guard++) {
-    const path = wait && guard === 0 ? `/api/sync/wait?since=${encodeURIComponent(cursor)}&timeout=15` : `/api/sync/pull?since=${encodeURIComponent(cursor)}&limit=200`;
-    const { data } = await http(auth, path, { timeout: wait && guard === 0 ? 25000 : 60000 });
+    const data = await timed((be) => be.pull(auth, { since: cursor, limit: 200, wait: wait && guard === 0 }));
     if (!data) break; // 304: nothing new
     for (const r of data.records) { const k = await applyRemote(r, key); if (k) touched.add(k); }
     cursor = data.cursor;
@@ -378,7 +347,7 @@ export async function ensureAsset(id) {
   const auth = await getAuth();
   if (!auth?.token || !navigator.onLine || transfers.has(id)) return rec || null;
   const key = await loadKey();
-  const url = base(auth) + '/api/assets/' + encodeURIComponent(id) + (rec?.sharedOwnerId ? '?owner=' + encodeURIComponent(rec.sharedOwnerId) : '');
+  const be = await B();
   const ctl = new AbortController();
   progress(id, { dir: 'down', loaded: 0, total: rec?.size || 0, ctl });
   const parts = [];
@@ -386,16 +355,12 @@ export async function ensureAsset(id) {
   try {
     for (let tries = 0; ; ) {
       try {
-        const res = await fetch(url, { headers: { Authorization: 'Bearer ' + auth.token, Range: `bytes=${loaded}-${loaded + CHUNK - 1}` }, signal: ctl.signal, credentials: 'omit' });
-        if (res.status === 404) return rec || null;
-        if (!res.ok && res.status !== 206) throw new HttpError(res.status);
-        const cr = /\/(\d+)$/.exec(res.headers.get('Content-Range') || '');
-        total = cr ? +cr[1] : +res.headers.get('Content-Length') || 0;
-        type = res.headers.get('Content-Type') || type;
-        const buf = new Uint8Array(await res.arrayBuffer());
-        parts.push(buf); loaded += buf.length; tries = 0;
+        const r = await be.downloadAsset(auth, rec || { id }, { start: loaded, end: loaded + CHUNK - 1, signal: ctl.signal });
+        if (!r) return rec || null;
+        total = r.total; type = r.type || type;
+        parts.push(r.bytes); loaded += r.bytes.length; tries = 0;
         progress(id, { loaded, total });
-        if (res.status === 200 || loaded >= total || !buf.length) break;
+        if (r.status === 200 || loaded >= total || !r.bytes.length) break;
       } catch (e) { // resume from the bytes we already have
         if (e?.name === 'AbortError' || ++tries > 4 || !navigator.onLine) throw e;
         await new Promise((r) => setTimeout(r, 800 * 2 ** tries));
@@ -454,10 +419,10 @@ async function syncAccountSettings(auth) {
   const dirtyAt = await getMeta('sync:settingsDirty', 0);
   if (dirtyAt) {
     const { sync: _local, ...rest } = getSettings();
-    const { data } = await http(auth, '/api/settings', { method: 'PUT', json: { settings: rest, updatedAt: dirtyAt } });
+    const data = await (await B()).putSettings(auth, { settings: rest, updatedAt: dirtyAt });
     if (!data.conflict) { await setMeta('sync:settingsDirty', 0); await setMeta('sync:settingsAt', data.updatedAt); return; }
   }
-  const { data } = await http(auth, '/api/settings');
+  const data = await (await B()).getSettings(auth);
   if (data.settings && data.updatedAt > ((await getMeta('sync:settingsAt', 0)) || 0)) {
     applyingRemote = true;
     try { await updateSettings({ ...data.settings, sync: getSettings().sync }); } finally { applyingRemote = false; }
@@ -502,7 +467,7 @@ async function cycle() {
 }
 
 async function rotateToken(auth) {
-  const { data } = await http(auth, '/api/auth/refresh', { method: 'POST' });
+  const data = await (await B()).refresh(auth);
   const cur = await getAuth();
   if (cur?.token === auth.token) await saveAuth({ ...cur, token: data.token, tokenAt: Date.now() });
 }
