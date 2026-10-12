@@ -151,7 +151,6 @@ export async function tagDialog(notes) {
 
 // ---------- note menu ----------
 export function noteMenuItems(note, { onOpen, onSelect, inTrash = note.trashedAt } = {}) {
-  const exp = (f) => () => A.exportNotes([note], f);
   if (inTrash) return [
     { label: 'Restore', icon: 'restore', onClick: () => A.restoreNotes([note]) },
     { label: 'Delete forever', icon: 'trash', danger: true, onClick: async () => { if (await confirmDialog({ title: 'Delete forever?', message: 'This note cannot be recovered.', confirmLabel: 'Delete', danger: true })) { await A.deleteForever([note]); toast('Deleted'); } } },
@@ -169,9 +168,7 @@ export function noteMenuItems(note, { onOpen, onSelect, inTrash = note.trashedAt
     hasUi('share') && { label: 'Share...', icon: 'link', onClick: async () => { const m = await loadUi('share'); m?.openShareDialog?.(note.id); } },
     { label: note.archived ? 'Unarchive' : 'Archive', icon: 'archive', onClick: () => A.archiveNotes([note]) },
     { divider: true },
-    { heading: 'Export' },
-    { label: 'PDF', icon: 'download', onClick: exp('pdf') }, { label: 'PNG images', icon: 'download', onClick: exp('png') },
-    { label: 'Markdown', icon: 'download', onClick: exp('md') }, { label: 'Inkwell JSON', icon: 'download', onClick: exp('json') },
+    { label: 'Export as PDF', icon: 'download', onClick: () => A.exportNotes([note]) },
     { divider: true },
     onSelect && { label: 'Select', icon: 'select', onClick: onSelect },
     { label: 'Move to trash', icon: 'trash', danger: true, onClick: () => A.trashNotes([note]) },

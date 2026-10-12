@@ -109,15 +109,22 @@ export async function applyTags(notes, add, remove) {
     n.tags = [...set];
   });
 }
-export async function exportNotes(notes, fmt) {
+/** PDF is the only export format offered. */
+export async function exportNotes(notes) {
   try {
     const m = await import('../features/export.js');
-    for (const n of notes) await m.exportNote(typeof n === 'string' ? await getRecord('notes', n) : n, fmt);
-    toast('Export ready');
+    for (const n of notes) await m.exportNote(typeof n === 'string' ? await getRecord('notes', n) : n, 'pdf');
+    toast('PDF export ready');
   } catch (e) {
     console.error(e);
     toast('Export is not available right now', { type: 'error' });
   }
+}
+export async function exportNotebookPdfs(notebookId) {
+  try {
+    const m = await import('../features/export.js');
+    await m.exportNotebook(notebookId, 'pdf');
+  } catch (e) { console.error(e); toast('Export is not available right now', { type: 'error' }); }
 }
 
 // ---------- daily note / images ----------

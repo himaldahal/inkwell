@@ -121,7 +121,6 @@ async function boot() {
     { label: 'Toggle focus (zen) mode', ic: 'focus', hint: 'Ctrl Shift F', run: zen },
     { label: 'Switch theme', ic: 'sun', run: themeCycle },
     { label: 'Switch to grid or list view', ic: 'grid', run: () => updateSettings({ view: getSettings().view === 'grid' ? 'list' : 'grid' }) },
-    { label: 'Export everything (backup)', ic: 'download', run: () => import('./features/export.js').then((m) => m.exportAll()).catch(() => toast('Export unavailable', { type: 'error' })) },
     { label: 'Keyboard shortcuts', ic: 'keyboard', hint: '?', run: shortcutsDialog },
     canInstall() && { label: 'Install app', ic: 'download', run: promptInstall },
   ].filter(Boolean));

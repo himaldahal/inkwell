@@ -37,19 +37,6 @@ export function mountSettings(container) {
   async function paint() {
     const st = s();
     const persistBtn = h('button', { class: 'btn', type: 'button', onclick: async () => { const ok = await navigator.storage?.persist?.(); toast(ok ? 'Storage will not be cleared automatically' : 'The browser declined persistent storage'); } }, 'Keep my data safe');
-    const importIn = h('input', { type: 'file', accept: '.json,application/json', hidden: true, onchange: async (e) => {
-      const f = e.target.files[0]; if (!f) return;
-      try {
-        const m = await import('../features/export.js');
-        let r;
-        try { r = await m.importBackup(f); } catch (err) {
-          if (err.code === 'PASSPHRASE_REQUIRED') { const { promptDialog } = await import('./dom.js'); const pw = await promptDialog({ title: 'Encrypted backup', label: 'Passphrase', type: 'password', confirmLabel: 'Import' }); if (!pw) return; r = await m.importBackup(f, { passphrase: pw }); } else throw err;
-        }
-        toast(`Imported ${plural(r.notes, 'note')}, ${plural(r.notebooks, 'notebook')}`);
-        calcStorage();
-      } catch (err) { toast(err?.message || 'Import is not available', { type: 'error' }); }
-      e.target.value = '';
-    } });
     const penColor = h('input', { type: 'color', value: st.pen.color, 'aria-label': 'Default pen color', onchange: (e) => updateSettings({ pen: { ...st.pen, color: e.target.value } }) });
     const penSize = h('input', { type: 'range', min: 1, max: 12, step: 0.5, value: st.pen.size, 'aria-label': 'Default pen size', oninput: (e) => { out.textContent = e.target.value; }, onchange: (e) => updateSettings({ pen: { ...s().pen, size: +e.target.value } }) });
     const out = h('output', {}, String(st.pen.size));
@@ -73,11 +60,6 @@ export function mountSettings(container) {
         h('p', { class: 'hint' }, 'Individual notes can be locked from their menu.')),
       card('Storage', storage, h('div', { class: 'btn-row' }, persistBtn)),
       card('Sync', syncMount),
-      card('Your data',
-        h('p', { class: 'hint' }, 'Back up everything (notes, notebooks, attachments) to a single file, or restore from one.'),
-        h('div', { class: 'btn-row' },
-          h('button', { class: 'btn', type: 'button', onclick: async () => { try { const m = await import('../features/export.js'); await m.exportAll(); toast('Backup downloaded'); } catch (e) { console.error(e); toast('Backup is not available right now', { type: 'error' }); } } }, icon('download', 18), 'Export everything'),
-          h('button', { class: 'btn', type: 'button', onclick: () => importIn.click() }, icon('upload', 18), 'Import backup'), importIn)),
       card('App', h('div', { class: 'btn-row' }, createInstallButton(), h('button', { class: 'btn', type: 'button', onclick: shortcutsDialog }, icon('keyboard', 18), 'Keyboard shortcuts')),
         h('p', { class: 'hint' }, 'Inkwell keeps everything on your device first, so it works without a connection.')));
     calcStorage();

@@ -42,13 +42,45 @@ export function createLibrary() {
   const sentinel = h('div', { class: 'sentinel', 'aria-hidden': 'true' });
   const fab = h('div', { class: 'fab-group' },
     h('button', { class: 'fab mini', type: 'button', 'aria-label': 'Daily note', title: 'Daily note', onclick: async () => { const n = await A.openDailyNote(); navigate('/note/' + encodeURIComponent(n.id)); } }, icon('calendar', 20)),
-    h('button', { class: 'fab', type: 'button', 'aria-label': 'New note', onclick: (e) => (e.shiftKey ? quickNote() : newNoteDialog({ notebookId: route.name === 'notebook' ? route.params.id : null })) }, icon('plus', 24), h('span', { class: 'fab-label' }, 'New note')));
+    h('button', { class: 'fab', type: 'button', 'aria-label': 'New note', onclick: (e) => newMenu(e.currentTarget) }, icon('plus', 24), h('span', { class: 'fab-label' }, 'New note')));
   const list = h('div', { class: 'lib' }, head, selbar, top, body, fab);
   body.append(gridEl, sentinel);
   el.append(list, preview.el);
 
   const io = new IntersectionObserver((ents) => { if (ents.some((e) => e.isIntersecting)) more(); }, { root: body, rootMargin: '800px 0px' });
   io.observe(sentinel);
+
+  const curNb = () => (route.name === 'notebook' ? route.params.id : null);
+  function newMenu(anchor) {
+    openMenu([
+      { label: 'Note', icon: 'file', onClick: () => newNoteDialog({ notebookId: curNb() }) },
+      { label: 'Subject (notebook)', icon: 'folder', onClick: () => import('./dialogs.js').then((m) => m.notebookDialog({ parentId: curNb() })) },
+      { label: 'Import PDF', icon: 'upload', onClick: importPdf },
+      { label: 'Quick note', icon: 'zap', onClick: () => quickNote({ notebookId: curNb() }) },
+    ], { anchor, title: 'Create' });
+  }
+  function importPdf() {
+    const inp = h('input', { type: 'file', accept: 'application/pdf,.pdf,image/*', multiple: true });
+    inp.addEventListener('change', async () => {
+      if (!inp.files.length) return;
+      toast('Importing...');
+      try {
+        const m = await import('../features/import.js');
+        const { ids, failed } = await m.importFiles(inp.files);
+        if (failed.length) toast('Some files could not be imported', { type: 'error' });
+        if (ids.length === 1) navigate('/note/' + encodeURIComponent(ids[0]));
+      } catch (e) { toast('Import failed', { type: 'error' }); }
+    });
+    inp.click();
+  }
+  // live presence
+  const presence = new Map();
+  const paintPresence = () => gridEl.querySelectorAll('.card').forEach((c) => {
+    const n = presence.get(c.dataset.id) || 0; let b = c.querySelector('.live-badge');
+    if (n && !b) { b = h('span', { class: 'live-badge', title: 'Collaborators are editing now' }, h('i', {}), 'Live'); c.querySelector('.thumb')?.append(b); }
+    else if (!n && b) b.remove();
+  });
+  on('presence:update', (d) => { if (!d?.noteId) return; const c = (d.users || []).length; if (c) presence.set(d.noteId, c); else presence.delete(d.noteId); paintPresence(); });
 
   // ----- header -----
   const titleFor = () => {
@@ -78,7 +110,7 @@ export function createLibrary() {
         createSyncPill(), viewBtn,
         iconBtn('sort', 'Sort and group', (e) => sortMenu(e.currentTarget)),
         iconBtn('select', 'Select notes', () => setSelecting(!selecting)),
-        h('button', { class: 'btn primary new-btn', type: 'button', onclick: () => newNoteDialog({ notebookId: route.name === 'notebook' ? route.params.id : null }) }, icon('plus', 18), 'New')));
+        h('button', { class: 'btn primary new-btn', type: 'button', 'aria-haspopup': 'menu', onclick: (e) => newMenu(e.currentTarget) }, icon('plus', 18), 'New')));
     fab.hidden = route.name === 'trash' || route.name === 'archive';
   }
   searchIn.addEventListener('input', debounce(() => { query = searchIn.value.trim(); refresh(); }, 120));
@@ -166,7 +198,7 @@ export function createLibrary() {
       const it = items[i];
       frag.append(it.head ? h('h2', { class: 'group-h' }, it.icon ? icon(it.icon, 14) : null, it.head) : cardFor(it.note));
     }
-    shown = end; gridEl.append(frag);
+    shown = end; gridEl.append(frag); paintPresence();
   }
   function cardFor(n) {
     const sig = [n.updatedAt, n.pinned, n.favorite, n.archived, n.trashedAt, n.notebookId, (n.tags || []).join(), getSettings().view, !!n.lock, isNoteLocked(n), query, JSON.stringify(A.shareInfo(n))].join('|');
@@ -291,7 +323,7 @@ export function createLibrary() {
           b('tag', 'Tag', async () => { if (await tagDialog(sel)) done(); }),
           b('star', 'Favorite', () => A.toggleFlag(sel, 'favorite')),
           b('archive', route.name === 'archive' ? 'Unarchive' : 'Archive', async () => { await A.archiveNotes(sel); done(); }),
-          b('download', 'Export', (e) => openMenu([{ label: 'PDF', onClick: () => A.exportNotes(sel, 'pdf') }, { label: 'Markdown', onClick: () => A.exportNotes(sel, 'md') }, { label: 'PNG', onClick: () => A.exportNotes(sel, 'png') }, { label: 'Inkwell JSON', onClick: () => A.exportNotes(sel, 'json') }], { anchor: e.currentTarget, title: 'Export' })),
+          b('download', 'PDF', () => A.exportNotes(sel)),
           b('trash', 'Trash', async () => { await A.trashNotes(sel); done(); }, 'danger')]));
   }
 

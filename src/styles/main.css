@@ -440,3 +440,25 @@ body { font-feature-settings: "cv11", "ss01"; letter-spacing: -.006em; }
 .avatar img { width: 100%; height: 100%; object-fit: cover; } .avatar.more { background: var(--surface-3); color: var(--text); }
 .ptr { height: var(--pull, 0px); overflow: hidden; display: grid; place-items: end center; color: var(--muted); transition: height .25s var(--spring); }
 .ptr.pulling { transition: none; } .ptr .ic { margin-bottom: 8px; transform: rotate(calc(var(--pull, 0px) * 4deg)); } .ptr.ready { color: var(--accent); } .ptr.spin .ic { animation: spin .8s linear infinite; }
+
+/* ---------- library visual refresh: airy, layered ---------- */
+:root { --bg: #f7f6f3; --surface: #ffffff; --surface-2: #f0efeb; --surface-3: #e6e4de; --border: #e8e5de; }
+:root[data-paper="neutral"] { --bg: #f6f6f7; --surface-2: #eeeef0; }
+:root[data-paper="cool"] { --bg: #f1f4f9; --surface-2: #e9edf4; }
+.card .thumb { border-radius: 16px; border-color: transparent; }
+.card-title { font-size: .95rem; } .card-meta { font-size: .78rem; }
+.sb-title { margin-top: 4px; }
+.sb-bottom { margin: 0; padding: 6px 8px 0; border-top: 1px solid var(--border); }
+.nav-item.nb .nb-ic { border-radius: 8px; }
+.sidebar { background: color-mix(in srgb, var(--surface-2) 70%, var(--bg)); }
+.live-badge { position: absolute; left: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 99px; background: rgba(20, 16, 30, .72); color: #fff; font-size: .68rem; font-weight: 700; backdrop-filter: blur(6px); }
+.live-badge i { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 0 rgba(34, 197, 94, .6); animation: live 1.6s infinite; }
+@keyframes live { 70% { box-shadow: 0 0 0 7px rgba(34, 197, 94, 0); } 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); } }
+/* floating selection bar */
+.selbar { position: absolute; top: auto; bottom: calc(18px + var(--sab)); left: 50%; right: auto; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); border-radius: 22px; border: 1px solid var(--border); box-shadow: 0 18px 50px -12px rgba(20, 10, 40, .35); padding: 6px 10px; animation: float-up .4s var(--spring); z-index: 8; }
+@keyframes float-up { from { opacity: 0; transform: translate(-50%, 24px) scale(.96); } }
+.sel-actions { margin-left: 4px; }
+@media (max-width: 699px) {
+  .selbar { bottom: calc(var(--tab-h) + var(--sab) + 12px); top: auto; padding: 6px; width: calc(100% - 20px); justify-content: center; }
+  .selbar .sel-actions { width: 100%; }
+}
