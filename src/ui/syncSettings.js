@@ -2,7 +2,7 @@
 import { h } from '../core/utils.js';
 import { on, toast } from '../core/store.js';
 import * as sync from '../core/sync.js';
-import { ensureCss, field, bytes, ago, errText, avatarEl } from './sxkit.js';
+import { ensureCss, field, bytes, ago, errText, avatarEl, passwordSetup } from './sxkit.js';
 
 const STATE = { idle: 'Up to date', syncing: 'Syncing', offline: 'Offline', error: 'Needs attention' };
 const go = (p) => { location.hash = '#' + p; };
@@ -121,10 +121,10 @@ export function mountSyncSettings(el) {
 
   function accountCard() {
     const [a1, oldPw] = field('Current password', { type: 'password', autocomplete: 'current-password' });
-    const [a2, newPw] = field('New password (10+ characters)', { type: 'password', autocomplete: 'new-password' });
-    return h('details', { class: 'sx-card' }, h('summary', {}, 'Password and account'), a1, a2,
+    const pws = passwordSetup({ label: 'New password', email: () => (info?.user?.email || '') });
+    return h('details', { class: 'sx-card' }, h('summary', {}, 'Password and account'), a1, ...pws.nodes,
       h('div', { class: 'sx-row' },
-        h('button', { class: 'sx-btn', disabled: busy, onclick: () => run(() => sync.changePassword(oldPw.value, newPw.value), 'Password changed; other devices signed out') }, 'Change password'),
+        h('button', { class: 'sx-btn', disabled: busy, onclick: () => { if (!pws.valid()) { msg = 'Please choose a password that meets the rules.'; paint(); return; } run(() => sync.changePassword(oldPw.value, pws.pw.value), 'Password changed; other devices signed out'); } }, 'Change password'),
         h('button', { class: 'sx-btn danger', disabled: busy, onclick: async () => {
           if (!confirm('Delete your cloud account and all synced data? Notes on this device are kept.')) return;
           if (confirm('Download all your notes as PDFs first? (recommended)')) { try { const m = await import('../features/export.js'); await m.exportNotebook('all', 'pdf'); } catch (e) { toast('Export failed: ' + errText(e)); return; } }

@@ -11,7 +11,7 @@ export function mountAdmin(el, { navigate = (p) => { location.hash = '#' + p; } 
   ensureCss();
   const root = h('div', { class: 'sx', style: { padding: '16px', maxWidth: '1100px', margin: '0 auto' } });
   el.replaceChildren(root);
-  const TABS = [['overview', 'Overview'], ['users', 'Users'], ['shares', 'Shares & links'], ['abuse', 'Abuse'], ['storage', 'Storage & trash'], ['settings', 'Settings'], ['audit', 'Audit log'], ['health', 'System']];
+  const TABS = [['overview', 'Overview'], ['users', 'Users'], ['shares', 'Shares & links'], ['abuse', 'Abuse'], ['mail', 'Mail'], ['storage', 'Storage & trash'], ['settings', 'Settings'], ['audit', 'Audit log'], ['health', 'System']];
   let tab = sessionStorage.getItem('admin-tab') || 'overview', content = h('div', { class: 'sx' }), alive = true;
 
   const table = (cols, rows) => h('div', { class: 'sx-tw' }, h('table', { class: 'sx-table' },
@@ -76,6 +76,19 @@ export function mountAdmin(el, { navigate = (p) => { location.hash = '#' + p; } 
         h('h3', {}, 'Recent failed sign-ins'), table(['When', 'E-mail', 'IP', 'Browser'], d.failedLogins.slice(0, 40).map((f) => [ago(f.at), f.username, f.ip, f.browser])),
         h('h3', {}, 'Suppressed e-mails (rate caps)'), table(['When', 'Detail'], d.suppressedMail.map((m) => [ago(m.at), m.detail])),
         h('p', {}, `Built-in disposable-domain list: ${d.disposableDomains.length} domains (extend the deny list under Settings).`)];
+    },
+
+    async mail() {
+      const d = await A('/mail');
+      const [l1, em] = field('Suppress an address (never e-mail it)', { type: 'email', placeholder: 'user@example.com' });
+      const c = d.caps;
+      return [h('div', { class: 'sx-stats' }, ...Object.entries(d.counts).map(([k, v]) => stat(k, v)), stat('Caps', `${c.recipientHour}/h, ${c.recipientDay}/day per address; ${c.ipHour}/h per IP; ${c.globalHour}/h total`)),
+        d.alerts.length ? h('div', { class: 'sx-warn' }, h('b', {}, 'Alerts'), ...d.alerts.slice(0, 5).map((a) => h('div', {}, `${ago(a.at)}: ${a.detail}`))) : null,
+        h('div', { class: 'sx-row' }, h('div', { class: 'sx-grow' }, l1), btn('Suppress', async () => { await post('/mail', { email: em.value }); tabs(tab); }, 'primary'), btn('Send queued now', async () => { const r = await post('/mail', { flush: true }); toast(`Sent ${r.sent}`); tabs(tab); })),
+        h('h3', {}, 'Top recipients (24 h)'), table(['Address', 'Messages', ''], d.topRecipients.map((r) => [r.to, String(r.n), btn('Suppress', async () => { await post('/mail', { email: r.to }); tabs(tab); }, 'danger')])),
+        h('h3', {}, 'Top source IPs (24 h)'), table(['IP', 'Messages', ''], d.topIps.map((r) => [r.ip, String(r.n), btn('Block 24 h', async () => { await post('/abuse', { kind: 'ip', value: r.ip, hours: 24, reason: 'mail abuse' }); tabs(tab); }, 'danger')])),
+        h('h3', {}, 'Suppress list'), table(['Address', 'Reason', 'Since', ''], d.suppressed.map((s) => [s.email, s.reason, ago(s.at), btn('Remove', async () => { await A(`/mail/suppress/${s.id}`, { method: 'DELETE' }); tabs(tab); })])),
+        h('h3', {}, 'Recent messages'), table(['When', 'To', 'Kind', 'Status', 'Note', 'IP'], d.recent.map((m) => [ago(m.at), m.to, m.kind, badge(m.status, m.status === 'sent' ? 'ok' : m.status === 'queued' ? '' : 'warn'), m.note, m.ip]))];
     },
 
     async storage() {

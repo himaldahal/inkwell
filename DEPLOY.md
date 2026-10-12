@@ -14,7 +14,7 @@
    ```
    python manage.py migrate
    python manage.py collectstatic --noinput     # admin assets only
-   python manage.py createsuperuser             # e-mail + password
+   python manage.py create_admin --email you@example.com --password '...'   # first administrator (or createsuperuser)
    ```
 6. Click **Restart**. Open the site; sign in with the superuser (internal mode: create other users under `#/admin`).
 7. Force HTTPS in `.htaccess` (public_html or the app's domain root):

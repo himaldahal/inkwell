@@ -48,5 +48,11 @@ overview, users (create/edit/disable/reset/revoke sessions/delete), shares and l
 ## Security notes
 DB-backed rate limits (login per IP+email with exponential lockout, register, forgot/resend, invites, link password attempts, mail caps per recipient/IP/global), honeypot + timing check on sign-up, disposable-domain blocklist, `TRUSTED_PROXIES` for client IPs, HSTS/secure cookies when `DEBUG` is off, CSP without inline scripts (inline script hashes computed from the build), `X-Frame-Options: DENY`, nosniff, `SECRET_KEY` required. Every endpoint is scoped to the authenticated principal; unauthorized and missing resources both return 404. Remaining caveat: app pages still allow inline *styles* (`style-src 'unsafe-inline'`).
 
+## Mail abuse protection
+All mail goes through a DB queue (`MailQueue`) flushed in small throttled batches (`MAIL_PER_MINUTE`) by requests, no worker. Caps (env): per address `MAIL_PER_RECIPIENT_HOURLY=3` / `_DAILY=10`, per IP, per account, global `MAIL_GLOBAL_HOURLY`; invites `INVITES_PER_DAY=20`, `INVITES_PER_ADDRESS_DAILY=2`; unverified accounts trigger no mail. Capped sends are suppressed silently (responses are identical) and raise a `mail.alert` shown in the admin Mail tab. Forgot/resend have a server-enforced cooldown (60 s, doubling to 1 h) returned as `retryAfter` for every request, whether or not an account exists. Register/forgot/resend require a hashcash proof of work (`GET /api/pow?purpose=`; `POW_BITS=12`, `POW_BITS_ABUSE=17` while abuse is detected) plus honeypot and timing checks. A suppress list (bounces, complaints, manual) and the disposable-domain blocklist are enforced.
+
+## Passwords
+Validators: 10+ characters, not common, not similar to the e-mail, numeric-only rejected, upper+lower+number. The UI shows one live rule at a time. `python manage.py create_admin --email --password` skips validators (use for the first administrator).
+
 ## Tests
 `python manage.py test` (SECRET_KEY not needed under `test`).

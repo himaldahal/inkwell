@@ -1,6 +1,6 @@
 // Shared bits for the account / sharing / admin UIs: themed CSS (uses the app's CSS variables) and tiny helpers.
 import { h } from '../core/utils.js';
-import { avatarUrl } from '../core/sync.js';
+import { avatarUrl, apiCall } from '../core/sync.js';
 
 const CSS = `
 .sx{color:var(--text,#1c1c1e);font:inherit;display:grid;gap:14px;width:100%}.sx *{box-sizing:border-box}
@@ -32,6 +32,13 @@ const CSS = `
 .sx-brand{display:flex;align-items:center;gap:10px;justify-content:center;font-size:1.4rem;font-weight:700;margin-bottom:6px}
 .sx-hp{position:absolute!important;left:-9999px;width:1px;height:1px;overflow:hidden}
 .sx-spark{width:100%;height:56px}
+.sx-help{font-size:.78rem;color:var(--muted,#8e8e93);min-height:1.1em}.sx-help.bad{color:var(--danger,#ff3b30)}.sx-help.good{color:var(--ok,#248a3d)}
+.sx-pw{position:relative;display:block}.sx-pw input{padding-right:46px!important}
+.sx-eye{position:absolute;right:2px;top:50%;transform:translateY(-50%);width:42px;height:40px;border:0;background:none;color:var(--muted,#8e8e93);cursor:pointer;border-radius:8px;display:grid;place-items:center}
+.sx-eye[aria-pressed=true]{color:var(--accent,#ff9f0a)}.sx-eye:focus-visible{outline:2px solid var(--accent,#ff9f0a)}
+.sx-meter{display:flex;gap:4px;height:4px}.sx-meter i{flex:1;border-radius:2px;background:var(--surface-3,#dcdce2);transition:background .2s}
+.sx-meter i.on1{background:var(--danger,#ff3b30)}.sx-meter i.on2{background:var(--warn,#c77700)}.sx-meter i.on3{background:var(--accent,#ff9f0a)}.sx-meter i.on4{background:var(--ok,#248a3d)}
+.sx input:disabled,.sx button:disabled{opacity:.55}.sx input[aria-invalid=true]{border-color:var(--danger,#ff3b30)}
 `;
 export function ensureCss() {
   if (document.getElementById('sx-style')) return;
@@ -46,7 +53,79 @@ export function avatarEl(user, size = 32) {
   if (user?.avatar) avatarUrl(user.avatar).then((u) => { if (u) { el.textContent = ''; el.style.backgroundImage = `url(${u})`; } });
   return el;
 }
-export const field = (label, attrs = {}) => { const input = h(attrs.tag || 'input', attrs); return [h('label', {}, label, input), input]; };
+const EYE = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+const EYE_OFF = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.9 17.9A10.9 10.9 0 0 1 12 19c-6.4 0-10-7-10-7a18 18 0 0 1 4.1-5M9.9 5.2A10 10 0 0 1 12 5c6.4 0 10 7 10 7a18 18 0 0 1-2.2 3.2M1 1l22 22M9.5 9.5a3 3 0 0 0 4.2 4.2"/></svg>';
+/** Wrap a password input with an accessible show/hide toggle (keeps focus and caret). */
+export function withEye(input) {
+  const btn = h('button', { type: 'button', class: 'sx-eye', 'aria-pressed': 'false', 'aria-label': 'Show password', title: 'Show password' });
+  btn.innerHTML = EYE;
+  btn.addEventListener('mousedown', (e) => e.preventDefault()); // keep the caret in the input
+  btn.addEventListener('click', () => {
+    const show = input.type === 'password', a = input.selectionStart, b = input.selectionEnd, had = document.activeElement === input;
+    input.type = show ? 'text' : 'password';
+    btn.setAttribute('aria-pressed', String(show)); btn.setAttribute('aria-label', show ? 'Hide password' : 'Show password'); btn.title = btn.getAttribute('aria-label');
+    btn.innerHTML = show ? EYE_OFF : EYE;
+    if (had || true) { input.focus({ preventScroll: true }); try { input.setSelectionRange(a, b); } catch { /* ignore */ } }
+  });
+  return h('span', { class: 'sx-pw' }, input, btn);
+}
+/** Labelled field -> [labelEl, inputEl]. Password inputs automatically get the eye toggle. opts.help = helper text. */
+export const field = (label, attrs = {}) => {
+  const { help, tag, ...rest } = attrs;
+  const input = h(tag || 'input', rest);
+  const isPw = rest.type === 'password';
+  const lab = h('label', {}, label, isPw ? withEye(input) : input, help ? h('span', { class: 'sx-help' }, help) : null);
+  return [lab, input];
+};
+
+const COMMON = ['password', 'passw0rd', '12345678', '123456789', '1234567890', 'qwertyuiop', 'qwerty123', 'letmein', 'welcome', 'iloveyou', 'admin123', 'inkwell', 'abc123456', 'password1', 'changeme'];
+/** first unmet rule only, in this order: length -> not common / not your e-mail -> mixed characters -> matches confirmation */
+export function firstUnmet(pw, { email = '', confirm } = {}) {
+  if (pw.length < 10) return 'Use at least 10 characters';
+  const low = pw.toLowerCase(), local = email.split('@')[0].toLowerCase();
+  if (COMMON.some((c) => low.includes(c)) || (local.length >= 3 && low.includes(local))) return 'Avoid common words or parts of your e-mail';
+  if (!(/[a-z]/.test(pw) && /[A-Z]/.test(pw) && /\d/.test(pw))) return 'Mix upper case, lower case and a number';
+  if (confirm !== undefined && pw !== confirm) return 'Passwords must match';
+  return null;
+}
+/** New-password inputs with a single live hint + strength meter. -> {nodes, pw, confirm, valid()} */
+export function passwordSetup({ label = 'New password', email = () => '', withConfirm = true, current = false } = {}) {
+  const [l1, pw] = field(label, { type: 'password', autocomplete: 'new-password', required: true, minlength: 10, 'aria-describedby': 'sx-pw-hint' });
+  const [l2, confirm] = withConfirm ? field('Repeat password', { type: 'password', autocomplete: 'new-password', required: true }) : [null, null];
+  const hint = h('div', { class: 'sx-help', id: 'sx-pw-hint', role: 'status', 'aria-live': 'polite' }, 'Use at least 10 characters');
+  const bars = [0, 1, 2, 3].map(() => h('i'));
+  const meter = h('div', { class: 'sx-meter', 'aria-hidden': 'true' }, bars);
+  const unmet = () => firstUnmet(pw.value, { email: email(), confirm: confirm ? confirm.value : undefined });
+  const paint = () => {
+    const v = pw.value, u = unmet();
+    const score = !v ? 0 : Math.min(4, (v.length >= 10) + (/[a-z]/.test(v) && /[A-Z]/.test(v)) + /\d/.test(v) + (v.length >= 14 || /[^\w]/.test(v)));
+    bars.forEach((b, i) => { b.className = i < score ? 'on' + score : ''; });
+    hint.className = 'sx-help ' + (u ? (v ? 'bad' : '') : 'good');
+    hint.textContent = u ? (v ? u : 'Use at least 10 characters') : '\u2713 Looks good';
+    pw.setAttribute('aria-invalid', String(!!u && !!v));
+  };
+  pw.addEventListener('input', paint); confirm?.addEventListener('input', paint); paint();
+  return { nodes: [l1, meter, hint, l2].filter(Boolean), pw, confirm, valid: () => !unmet(), refresh: paint };
+}
+
+/** Proof-of-work (hashcash, WebCrypto) for register / forgot / resend. Returns {challenge, nonce}. */
+export async function solvePow(purpose) {
+  const { challenge, difficulty } = await apiCall('/api/pow?purpose=' + purpose, { noAuth: true, timeout: 8000 });
+  const enc = new TextEncoder(), full = difficulty >> 3, rem = difficulty & 7;
+  for (let n = 0; ; n++) {
+    const d = new Uint8Array(await crypto.subtle.digest('SHA-256', enc.encode(`${challenge}:${n}`)));
+    let ok = true;
+    for (let i = 0; i < full; i++) if (d[i] !== 0) { ok = false; break; }
+    if (ok && (rem === 0 || d[full] >> (8 - rem) === 0)) return { challenge, nonce: String(n) };
+    if (n % 2000 === 1999) await new Promise((r) => setTimeout(r, 0)); // keep the UI responsive
+  }
+}
+/** Disable a button and show a live countdown ("Resend in 42s") for a server-provided cooldown. */
+export function countdown(btn, seconds, label) {
+  let left = Math.ceil(seconds || 0);
+  const tick = () => { if (left <= 0) { btn.disabled = false; btn.textContent = label; return; } btn.disabled = true; btn.textContent = `${label} in ${left}s`; left--; setTimeout(tick, 1000); };
+  tick();
+}
 export const bytes = (n = 0) => (n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : n < 1073741824 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1073741824).toFixed(2) + ' GB');
 export const ago = (t) => { if (!t) return 'never'; const s = Math.round((Date.now() - new Date(t).getTime()) / 1000); return s < 10 ? 'just now' : s < 60 ? s + 's ago' : s < 3600 ? Math.round(s / 60) + ' min ago' : s < 86400 ? Math.round(s / 3600) + ' h ago' : new Date(t).toLocaleDateString(); };
 export const errText = (e) => (e?.name === 'TypeError' ? 'Cannot reach the server. Check the address and your connection.' : e?.message || String(e));

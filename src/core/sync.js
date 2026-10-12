@@ -93,10 +93,10 @@ export async function getMe() {
   return a?.token ? { ...(a.user || {}), serverUrl: a.serverUrl } : null;
 }
 
-export async function signIn({ serverUrl = '', email, password, displayName, register = false, code, remember, website = '', elapsedMs }) {
+export async function signIn({ serverUrl = '', email, password, displayName, register = false, code, remember, website = '', elapsedMs, pow }) {
   const auth0 = { serverUrl };
   const data = await apiCallRaw(auth0, register ? '/api/auth/register' : '/api/auth/login', {
-    email, password, displayName, code, remember, website, elapsedMs,
+    email, password, displayName, code, remember, website, elapsedMs, pow,
     deviceId: await getDeviceId(), deviceName: deviceName(),
   });
   if (data.verificationRequired) return { verificationRequired: true, email: data.email || email };

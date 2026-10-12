@@ -2,7 +2,7 @@
 import { h } from '../core/utils.js';
 import { toast } from '../core/store.js';
 import * as sync from '../core/sync.js';
-import { ensureCss, field, errText, safeNext } from './sxkit.js';
+import { ensureCss, field, errText, safeNext, passwordSetup, solvePow, countdown } from './sxkit.js';
 
 export function mountAuth(el, { sub = 'login', query = {}, navigate = (p) => { location.hash = '#' + p; } } = {}) {
   ensureCss();
@@ -61,34 +61,46 @@ export function mountAuth(el, { sub = 'login', query = {}, navigate = (p) => { l
   function register() {
     if (!cfg.registrationOpen) return h('div', { class: 'sx-card' }, h('h2', {}, 'Registration is closed'), h('p', {}, 'Ask your administrator for an account.'), link('Back to sign in', '/auth/login'));
     const [l0, name] = field('Your name', { type: 'text', autocomplete: 'name', maxlength: 60 });
-    const [l1, email] = field('E-mail', { type: 'email', autocomplete: 'email', required: true, autocapitalize: 'none' });
-    const [l2, pass] = field('Password (10+ characters)', { type: 'password', autocomplete: 'new-password', required: true, minlength: 10 });
+    const [l1, email] = field('E-mail', { type: 'email', autocomplete: 'email', inputmode: 'email', required: true, autocapitalize: 'none', spellcheck: 'false' });
+    const pws = passwordSetup({ label: 'Password', email: () => email.value });
     const hp = h('input', { type: 'text', name: 'website', tabindex: '-1', autocomplete: 'off', 'aria-hidden': 'true' });
-    return h('form', { class: 'sx-card', onsubmit: (e) => {
+    return h('form', { class: 'sx-card', novalidate: true, onsubmit: (e) => {
       e.preventDefault(); if (busy) return;
+      if (!pws.valid()) { msg = 'Please choose a password that meets the rules.'; paint(); return; }
       run(async () => {
-        const r = await sync.signIn({ email: email.value.trim(), password: pass.value, displayName: name.value.trim(), register: true, website: hp.value, elapsedMs: Date.now() - shown });
+        const pow = await solvePow('register');
+        const r = await sync.signIn({ email: email.value.trim(), password: pws.pw.value, displayName: name.value.trim(), register: true, website: hp.value, elapsedMs: Date.now() - shown, pow });
         if (r.verificationRequired) { ok = `We sent a confirmation link to ${r.email}. Open it to finish.`; sub = 'verify'; verifyEmail = r.email; return; }
         toast('Welcome to Inkwell'); go('/');
       });
     } },
-      h('h2', {}, 'Create account'), l0, l1, l2, h('div', { class: 'sx-hp' }, h('label', {}, 'Website', hp)),
+      h('h2', {}, 'Create account'), l0, l1, ...pws.nodes, h('div', { class: 'sx-hp' }, h('label', {}, 'Website', hp)),
       ...status(),
       h('button', { class: 'sx-btn primary', type: 'submit', disabled: busy }, busy ? 'Please wait...' : 'Create account'),
       h('p', {}, 'Already registered? ', link('Sign in', '/auth/login')));
   }
 
   function forgot() {
-    const [l1, email] = field('E-mail', { type: 'email', autocomplete: 'email', required: true });
-    return h('form', { class: 'sx-card', onsubmit: (e) => { e.preventDefault(); run(async () => { await sync.apiCall('/api/auth/forgot', { method: 'POST', json: { email: email.value.trim() }, noAuth: true }); ok = 'If an account exists for that address, a reset link is on its way.'; }); } },
-      h('h2', {}, 'Reset password'), h('p', {}, 'We will e-mail you a link that works once.'), l1, ...status(),
-      h('button', { class: 'sx-btn primary', type: 'submit', disabled: busy }, 'Send reset link'), link('Back to sign in', '/auth/login'));
+    const [l1, email] = field('E-mail', { type: 'email', autocomplete: 'email', inputmode: 'email', required: true, autocapitalize: 'none' });
+    const hp = h('input', { type: 'text', name: 'website', tabindex: '-1', autocomplete: 'off', 'aria-hidden': 'true' });
+    const submit = h('button', { class: 'sx-btn primary', type: 'submit', disabled: busy }, 'Send reset link');
+    return h('form', { class: 'sx-card', onsubmit: (e) => {
+      e.preventDefault(); if (busy || submit.disabled) return;
+      run(async () => {
+        const r = await sync.apiCall('/api/auth/forgot', { method: 'POST', json: { email: email.value.trim(), website: hp.value, elapsedMs: Date.now() - shown, pow: await solvePow('forgot') }, noAuth: true });
+        ok = 'If an account exists for that address, a reset link is on its way.';
+        cool = r.retryAfter || 0; coolAt = Date.now();
+      });
+    } },
+      h('h2', {}, 'Reset password'), h('p', {}, 'We will e-mail you a link that works once.'), l1, h('div', { class: 'sx-hp' }, h('label', {}, 'Website', hp)), ...status(), submit,
+      (() => { if (cool - (Date.now() - coolAt) / 1000 > 0) countdown(submit, cool - (Date.now() - coolAt) / 1000, 'Send again'); return link('Back to sign in', '/auth/login'); })());
   }
+  let cool = 0, coolAt = 0;
 
   function reset() {
-    const [l1, pass] = field('New password (10+ characters)', { type: 'password', autocomplete: 'new-password', required: true, minlength: 10 });
-    return h('form', { class: 'sx-card', onsubmit: (e) => { e.preventDefault(); run(async () => { await sync.apiCall('/api/auth/reset', { method: 'POST', json: { token: query.token, newPassword: pass.value }, noAuth: true }); toast('Password changed. Please sign in.'); go('/auth/login'); }); } },
-      h('h2', {}, 'Choose a new password'), l1, ...status(), h('button', { class: 'sx-btn primary', type: 'submit', disabled: busy || !query.token }, 'Change password'));
+    const pws = passwordSetup({ label: 'New password', email: () => query.email || '' });
+    return h('form', { class: 'sx-card', novalidate: true, onsubmit: (e) => { e.preventDefault(); if (!pws.valid()) { msg = 'Please choose a password that meets the rules.'; paint(); return; } run(async () => { await sync.apiCall('/api/auth/reset', { method: 'POST', json: { token: query.token, newPassword: pws.pw.value }, noAuth: true }); toast('Password changed. Please sign in.'); go('/auth/login'); }); } },
+      h('h2', {}, 'Choose a new password'), ...pws.nodes, ...status(), h('button', { class: 'sx-btn primary', type: 'submit', disabled: busy || !query.token }, 'Change password'));
   }
 
   let verifyEmail = '', verified = false;
@@ -99,15 +111,15 @@ export function mountAuth(el, { sub = 'login', query = {}, navigate = (p) => { l
     }
     return h('div', { class: 'sx-card' }, h('h2', {}, verified ? 'You are all set' : 'Confirm your e-mail'),
       ...status(), !query.token ? h('p', {}, 'Open the confirmation link we sent you.') : null,
-      !query.token && verifyEmail ? h('button', { class: 'sx-btn', onclick: () => run(async () => { await sync.apiCall('/api/auth/resend', { method: 'POST', json: { email: verifyEmail }, noAuth: true }); ok = 'Sent again if the address is registered.'; }) }, 'Resend e-mail') : null,
+      !query.token && verifyEmail ? (() => { const b = h('button', { class: 'sx-btn', onclick: () => run(async () => { const r = await sync.apiCall('/api/auth/resend', { method: 'POST', json: { email: verifyEmail, pow: await solvePow('resend') }, noAuth: true }); ok = 'Sent again if the address is registered.'; cool = r.retryAfter || 0; coolAt = Date.now(); }) }, 'Resend e-mail'); if (cool - (Date.now() - coolAt) / 1000 > 0) countdown(b, cool - (Date.now() - coolAt) / 1000, 'Resend e-mail'); return b; })() : null,
       link(verified ? 'Sign in' : 'Back to sign in', '/auth/login'));
   }
 
   function change() { // forced change after an admin issued a temporary password
     const [l1, oldp] = field('Temporary password', { type: 'password', autocomplete: 'current-password', required: true });
-    const [l2, pass] = field('New password (10+ characters)', { type: 'password', autocomplete: 'new-password', required: true, minlength: 10 });
-    return h('form', { class: 'sx-card', onsubmit: (e) => { e.preventDefault(); run(async () => { await sync.changePassword(oldp.value, pass.value); toast('Password updated'); sync.syncNow(); go(next); }); } },
-      h('h2', {}, 'Set your password'), h('p', {}, 'Your administrator gave you a temporary password. Choose your own to continue.'), l1, l2, ...status(),
+    const pws = passwordSetup({ label: 'New password' });
+    return h('form', { class: 'sx-card', novalidate: true, onsubmit: (e) => { e.preventDefault(); if (!pws.valid()) { msg = 'Please choose a password that meets the rules.'; paint(); return; } run(async () => { await sync.changePassword(oldp.value, pws.pw.value); toast('Password updated'); sync.syncNow(); go(next); }); } },
+      h('h2', {}, 'Set your password'), h('p', {}, 'Your administrator gave you a temporary password. Choose your own to continue.'), l1, ...pws.nodes, ...status(),
       h('button', { class: 'sx-btn primary', type: 'submit', disabled: busy }, 'Save password'));
   }
 
