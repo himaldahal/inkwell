@@ -1,12 +1,11 @@
 // Export / backup / import. Heavy libs (pdf-lib) are lazy-loaded.
-import { getAll, getAllRaw, getRecord, getAsset, putRecord, rawPut, newId } from '../core/db.js';
-import { emit, toast } from '../core/store.js';
-import { blobToDataURL } from '../core/utils.js';
+import { getAll, getAsset, putRecord } from '../core/db.js';
+import { toast } from '../core/store.js';
 import { renderPdfPage } from './pdf.js';
-import { htmlToMarkdown, htmlToText, textToHtml } from './convert.js';
+import { textToHtml } from './convert.js';
 import { makeZip } from './zip.js';
 
-export { htmlToMarkdown, htmlToText, markdownToHtml } from './convert.js';
+// PDF is the only export format. Importing files INTO notes is still supported.
 export { importFiles } from './import.js';
 
 // ---------------------------------------------------------------- rendering
@@ -181,6 +180,7 @@ export function download(blob, filename) {
   setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 4000);
 }
 
+/** Share sheet on touch devices when files are shareable, otherwise a download. */
 async function deliver(blob, filename) {
   const coarse = window.matchMedia?.('(pointer: coarse)').matches;
   if (coarse && navigator.canShare && navigator.share) {
@@ -212,220 +212,375 @@ export async function createNoteFromShare({ title = '', text = '', url = '' } = 
   return note.id;
 }
 
-// ---------------------------------------------------------------- per-format builders
-async function noteAssets(note) {
-  const ids = new Set();
-  for (const p of note.pages || []) { if (p.pdfAssetId) ids.add(p.pdfAssetId); for (const it of p.items || []) { const a = it.assetId || it.data?.assetId; if (a) ids.add(a); } }
-  for (const r of note.recordings || []) ids.add(r.assetId);
-  const all = await getAllRaw('assets');
-  return all.filter((a) => !a.deleted && (a.noteId === note.id || ids.has(a.id)));
-}
-const b64 = async (blob) => (await blobToDataURL(blob)).split(',')[1] || '';
-async function assetToJson(a) {
-  const { blob, dirty, ...rest } = a;
-  return { ...rest, data: blob ? await b64(blob) : null };
-}
-function b64ToBytes(s) {
-  const bin = atob(s); const u = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
-  return u;
-}
-function stripNote(n) { const { dirty, ...r } = n; return r; }
+// ---------------------------------------------------------------- vector PDF building
+const K = 0.75; // page unit (px) -> PDF point
+const tick = () => new Promise((r) => setTimeout(r));
 
-async function buildPdf(note, { flatten = false, scale = 2, onProgress } = {}) {
-  const { PDFDocument } = await import('pdf-lib');
-  const out = await PDFDocument.create();
-  out.setTitle(note.title || 'Untitled'); out.setProducer('Inkwell'); out.setCreator('Inkwell');
-  const srcDocs = new Map();
-  const pages = note.pages?.length ? note.pages : [];
-  let i = 0;
-  for (const page of pages) {
-    const W = (page.width || 820) * 0.75, H = (page.height || 1160) * 0.75;
-    let done = false;
-    if (!flatten && page.type === 'pdf' && page.pdfAssetId) {
-      try {
-        if (!srcDocs.has(page.pdfAssetId)) {
-          const a = await getAsset(page.pdfAssetId);
-          srcDocs.set(page.pdfAssetId, await PDFDocument.load(await a.blob.arrayBuffer(), { ignoreEncryption: false }));
-        }
-        const [emb] = await out.embedPdf(srcDocs.get(page.pdfAssetId), [(page.pdfPage || 1) - 1]);
-        const pg = out.addPage([W, H]);
-        pg.drawPage(emb, { x: 0, y: 0, width: W, height: H });
-        if ((page.strokes?.length || page.items?.length)) {
-          const ov = await renderPageToCanvas(page, note, { scale, layer: 'annotations' });
-          const img = await out.embedPng(await (await canvasBlob(ov)).arrayBuffer());
-          pg.drawImage(img, { x: 0, y: 0, width: W, height: H });
-        }
-        done = true;
-      } catch (e) { console.warn('layered pdf page failed, flattening', e); }
-    }
-    if (!done) {
-      const c = await renderPageToCanvas(page, note, { scale });
-      const img = await out.embedJpg(await (await canvasBlob(c, 'image/jpeg', 0.92)).arrayBuffer());
-      out.addPage([W, H]).drawImage(img, { x: 0, y: 0, width: W, height: H });
-    }
-    onProgress?.(++i, pages.length);
-    await new Promise((r) => setTimeout(r)); // keep UI responsive
+function parseColor(c, fallback = [0, 0, 0]) {
+  if (!c) return { rgb: fallback, a: 1 };
+  c = String(c).trim();
+  let m = c.match(/^#([0-9a-f]{3,8})$/i);
+  if (m) {
+    let x = m[1];
+    if (x.length <= 4) x = x.split('').map((d) => d + d).join('');
+    const n = (i) => parseInt(x.slice(i, i + 2), 16) / 255;
+    return { rgb: [n(0), n(2), n(4)], a: x.length === 8 ? n(6) : 1 };
   }
-  if (!pages.length) out.addPage([612, 792]);
-  return new Blob([await out.save()], { type: 'application/pdf' });
+  m = c.match(/rgba?\(([^)]+)\)/i);
+  if (m) { const p = m[1].split(/[,\s/]+/).filter(Boolean).map(Number); return { rgb: [p[0] / 255, p[1] / 255, p[2] / 255], a: p[3] ?? 1 }; }
+  return { rgb: fallback, a: 1 };
 }
 
-function mdFor(note) {
-  const body = note.text ? htmlToMarkdown(note.text) : '';
-  const tags = (note.tags || []).length ? '\n' + note.tags.map((t) => '#' + t.replace(/\s+/g, '-')).join(' ') + '\n' : '';
-  return `# ${note.title || 'Untitled'}\n${tags}\n${body}`.trimEnd() + '\n';
+/** Pressure-smoothed outline polygon for a stroke, as an SVG path string (y down, page units). */
+export function strokeOutlinePath(s) {
+  const p = s.pts || [];
+  const size = s.size || 3;
+  const pts = [];
+  for (let i = 0; i + 2 < p.length + 0.5; i += 3) {
+    const x = p[i], y = p[i + 1];
+    const last = pts[pts.length - 1];
+    if (last && Math.abs(last.x - x) + Math.abs(last.y - y) < 0.4) continue;
+    pts.push({ x, y, p: p[i + 2] || 0.5 });
+  }
+  if (pts.length < 2) return null;
+  const hl = s.tool === 'highlighter', pencil = s.tool === 'pencil';
+  // smooth pressure and positions a little
+  let w = pts.map((q) => (hl ? size : size * (pencil ? 0.5 + 0.8 * q.p : 0.35 + 1.3 * q.p)));
+  w = w.map((v, i) => (i && i < w.length - 1 ? (w[i - 1] + 2 * v + w[i + 1]) / 4 : v));
+  const sm = pts.map((q, i) => (i && i < pts.length - 1
+    ? { x: (pts[i - 1].x + 2 * q.x + pts[i + 1].x) / 4, y: (pts[i - 1].y + 2 * q.y + pts[i + 1].y) / 4 } : q));
+  const L = [], R = [];
+  for (let i = 0; i < sm.length; i++) {
+    const a = sm[Math.max(0, i - 1)], b = sm[Math.min(sm.length - 1, i + 1)];
+    let dx = b.x - a.x, dy = b.y - a.y; const d = Math.hypot(dx, dy) || 1;
+    dx /= d; dy /= d;
+    const h = w[i] / 2;
+    L.push([sm[i].x - dy * h, sm[i].y + dx * h]); R.push([sm[i].x + dy * h, sm[i].y - dx * h]);
+  }
+  const f = (n) => Math.round(n * 100) / 100;
+  let d = `M${f(L[0][0])} ${f(L[0][1])}`;
+  for (let i = 1; i < L.length; i++) d += `L${f(L[i][0])} ${f(L[i][1])}`;
+  for (let i = R.length - 1; i >= 0; i--) d += `L${f(R[i][0])} ${f(R[i][1])}`;
+  return d + 'Z';
 }
-function txtFor(note) {
-  return `${note.title || 'Untitled'}\n\n${note.text ? htmlToText(note.text) : ''}`.trimEnd() + '\n';
-}
-const backupEnvelope = async (notes, notebooks, assets) => ({
-  format: 'inkwell-backup', version: 1, exportedAt: Date.now(),
-  notebooks: notebooks.map((n) => { const { dirty, ...r } = n; return r; }),
-  notes: notes.map(stripNote),
-  assets: await Promise.all(assets.map(assetToJson)),
-});
 
-/** Build a file for one note: returns { blob, filename } (png: first page only). */
-export async function buildNoteFile(note, fmt, opts = {}) {
-  const base = safeName(note.title);
-  switch (fmt) {
-    case 'pdf': return { blob: await buildPdf(note, opts), filename: base + '.pdf' };
-    case 'png': {
-      const c = await renderPageToCanvas(note.pages[0], note, { scale: opts.scale || 2 });
-      return { blob: await canvasBlob(c), filename: base + '.png' };
+function pdfTemplate(pg, W, H, tpl, paper, lib) {
+  const { rgb } = lib;
+  const P = parseColor(paper, [1, 1, 1]);
+  const Wp = W * K, Hp = H * K;
+  pg.drawRectangle({ x: 0, y: 0, width: Wp, height: Hp, color: rgb(...P.rgb) });
+  const line = (x0, y0, x1, y1, col = [0.47, 0.55, 0.67], op = 0.35, th = 0.75) =>
+    pg.drawLine({ start: { x: x0 * K, y: Hp - y0 * K }, end: { x: x1 * K, y: Hp - y1 * K }, thickness: th, color: rgb(...col), opacity: op });
+  const hl = (y, x0 = 0, x1 = W, ...r) => line(x0, y, x1, y, ...r);
+  const vl = (x, y0 = 0, y1 = H, ...r) => line(x, y0, x, y1, ...r);
+  switch (tpl) {
+    case 'lined': for (let y = 80; y < H; y += GRID) hl(y); vl(72, 0, H, [0.86, 0.35, 0.35], 0.4); break;
+    case 'grid': for (let y = GRID; y < H; y += GRID) hl(y); for (let x = GRID; x < W; x += GRID) vl(x); break;
+    case 'dot':
+      for (let y = GRID; y < H; y += GRID) for (let x = GRID; x < W; x += GRID)
+        pg.drawCircle({ x: x * K, y: Hp - y * K, size: 1.05, color: rgb(0.47, 0.55, 0.67), opacity: 0.6 });
+      break;
+    case 'cornell': {
+      const cue = Math.round(W * 0.27), sum = Math.round(H * 0.82);
+      for (let y = 80; y < sum; y += GRID) hl(y, cue, W);
+      vl(cue, 0, sum, [0.31, 0.35, 0.47], 0.6, 1.1); hl(sum, 0, W, [0.31, 0.35, 0.47], 0.6, 1.1); hl(60, 0, W, [0.31, 0.35, 0.47], 0.6, 1.1);
+      break;
     }
-    case 'md': return { blob: new Blob([mdFor(note)], { type: 'text/markdown' }), filename: base + '.md' };
-    case 'txt': return { blob: new Blob([txtFor(note)], { type: 'text/plain' }), filename: base + '.txt' };
-    case 'json': {
-      const env = await backupEnvelope([note], [], await noteAssets(note));
-      return { blob: new Blob([JSON.stringify(env)], { type: 'application/json' }), filename: base + '.inkwell.json' };
+    case 'todo':
+      for (let y = 90; y < H - 20; y += 44) {
+        hl(y + 22, 56, W - 30);
+        pg.drawRectangle({ x: 24 * K, y: Hp - (y + 16) * K, width: 20 * K, height: 20 * K, borderColor: rgb(0.47, 0.55, 0.67), borderWidth: 0.75, borderOpacity: 0.6 });
+      }
+      break;
+    default: break;
+  }
+}
+
+function wrapLines(text, font, size, maxW) {
+  const out = [];
+  for (const para of String(text).split('\n')) {
+    let line = '';
+    for (const word of para.split(/\s+/)) {
+      const t = line ? line + ' ' + word : word;
+      if (line && font.widthOfTextAtSize(t, size) > maxW) { out.push(line); line = word; } else line = t;
     }
-    default: throw new Error('Unknown export format: ' + fmt);
+    out.push(line);
+  }
+  return out;
+}
+/** replace characters the standard font cannot encode */
+function winSafe(text, font) {
+  const ok = new Map();
+  let out = '';
+  for (const ch of String(text)) {
+    let g = ok.get(ch);
+    if (g === undefined) { try { font.encodeText(ch); g = ch; } catch { g = ch === '•' ? '-' : /\s/.test(ch) ? ' ' : '?'; } ok.set(ch, g); }
+    out += g;
+  }
+  return out;
+}
+
+/** Parse the typed-text HTML into [{kind:'h1'|'h2'|'h3'|'p'|'li'|'quote'|'pre', text, depth}] */
+function textBlocks(html) {
+  const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html');
+  const out = [];
+  const inl = (n) => n.textContent.replace(/\s+/g, ' ').trim();
+  (function walk(n, depth) {
+    for (const c of n.children) {
+      const t = c.tagName;
+      if (/^H[1-6]$/.test(t)) out.push({ kind: 'h' + Math.min(3, +t[1]), text: inl(c) });
+      else if (t === 'UL' || t === 'OL') {
+        let i = 0;
+        for (const li of c.children) {
+          i++;
+          const nested = [...li.children].filter((x) => x.tagName === 'UL' || x.tagName === 'OL');
+          const clone = li.cloneNode(true); clone.querySelectorAll('ul,ol').forEach((x) => x.remove());
+          const cb = clone.querySelector('input[type=checkbox]');
+          out.push({ kind: 'li', depth, text: (cb ? (cb.checked ? '[x] ' : '[ ] ') : t === 'OL' ? i + '. ' : '- ') + inl(clone) });
+          nested.forEach((x) => walk({ children: [x] }, depth + 1));
+        }
+      } else if (t === 'PRE') out.push({ kind: 'pre', text: c.textContent });
+      else if (t === 'BLOCKQUOTE') out.push({ kind: 'quote', text: inl(c) });
+      else if (t === 'HR') out.push({ kind: 'hr', text: '' });
+      else if (c.children.length && [...c.children].some((x) => /^(P|DIV|UL|OL|H[1-6]|BLOCKQUOTE|PRE)$/.test(x.tagName))) walk(c, depth);
+      else if (inl(c)) out.push({ kind: 'p', text: c.innerHTML.includes('<br') ? c.innerText || inl(c) : inl(c) });
+    }
+  })(doc.body, 0);
+  if (!out.length) { const t = doc.body.textContent.trim(); if (t) out.push({ kind: 'p', text: t }); }
+  return out;
+}
+
+function addTextPages(out, note, fonts, lib, numberFor) {
+  const blocks = textBlocks(note.text || '');
+  if (!blocks.length) return 0;
+  const { rgb } = lib;
+  const PW = 612, PH = 792, M = 56;
+  let pg = out.addPage([PW, PH]), y = PH - M, count = 1;
+  const need = (h) => { if (y - h < M) { pg = out.addPage([PW, PH]); y = PH - M; count++; } };
+  for (const b of blocks) {
+    const spec = { h1: [22, 'bold', 14], h2: [17, 'bold', 10], h3: [14, 'bold', 8], p: [11, 'reg', 6], li: [11, 'reg', 3], quote: [11, 'ital', 6], pre: [9.5, 'mono', 6], hr: [6, 'reg', 6] }[b.kind];
+    const [size, f, gap] = spec;
+    const font = fonts[f];
+    const indent = (b.depth || 0) * 16 + (b.kind === 'quote' ? 14 : 0);
+    if (b.kind === 'hr') { need(14); pg.drawLine({ start: { x: M, y: y - 4 }, end: { x: PW - M, y: y - 4 }, thickness: 0.7, color: rgb(0.7, 0.7, 0.7) }); y -= 14; continue; }
+    const text = winSafe(b.text, font);
+    const lines = b.kind === 'pre' ? text.split('\n') : wrapLines(text, font, size, PW - 2 * M - indent);
+    y -= (b.kind.startsWith('h') ? gap : 0);
+    for (const ln of lines) {
+      need(size * 1.35);
+      y -= size * 1.15;
+      if (ln) pg.drawText(ln, { x: M + indent, y, size, font, color: b.kind === 'quote' ? rgb(0.35, 0.35, 0.4) : rgb(0.1, 0.1, 0.12) });
+      y -= size * 0.2;
+    }
+    y -= gap;
+  }
+  return count;
+}
+
+async function drawPageItemsAndStrokes(out, pg, page, note, lib, fonts, scale) {
+  const { rgb, BlendMode } = lib;
+  const W = page.width || 820, H = page.height || 1160, Hp = H * K;
+  const extras = []; // items to rasterize on a shared overlay
+  // images first (under ink)
+  for (const it of page.items || []) {
+    if (it.type !== 'image') continue;
+    let done = false;
+    if (!it.rotation) {
+      try {
+        const aid = it.assetId || it.data?.assetId;
+        let blob = aid ? (await getAsset(aid))?.blob : null;
+        const src = it.src || it.url || it.data?.src;
+        if (!blob && src) blob = await (await fetch(src)).blob();
+        if (blob) {
+          const bytes = await blob.arrayBuffer();
+          const img = blob.type === 'image/jpeg' ? await out.embedJpg(bytes) : blob.type === 'image/png' ? await out.embedPng(bytes) : null;
+          if (img) { pg.drawImage(img, { x: it.x * K, y: Hp - (it.y + it.h) * K, width: it.w * K, height: it.h * K }); done = true; }
+        }
+      } catch { /* raster fallback */ }
+    }
+    if (!done) extras.push(it);
+  }
+  // ink as vector polygons
+  for (const s of page.strokes || []) {
+    const d = strokeOutlinePath(s);
+    const c = parseColor(s.color);
+    const hl = s.tool === 'highlighter';
+    const opacity = (hl ? 0.35 : s.tool === 'pencil' ? 0.85 : 1) * c.a;
+    if (d) {
+      try { pg.drawSvgPath(d, { x: 0, y: Hp, scale: K, color: rgb(...c.rgb), opacity, borderWidth: 0, blendMode: hl ? BlendMode.Multiply : undefined }); }
+      catch { /* skip malformed stroke */ }
+      if (!hl && s.pts.length >= 6) {
+        const n = s.pts.length / 3;
+        for (const i of [0, n - 1]) pg.drawCircle({ x: s.pts[i * 3] * K, y: Hp - s.pts[i * 3 + 1] * K, size: (s.size || 3) * K * (0.35 + 1.3 * (s.pts[i * 3 + 2] || 0.5)) / 2, color: rgb(...c.rgb), opacity });
+      }
+    } else if (s.pts?.length >= 2) {
+      pg.drawCircle({ x: s.pts[0] * K, y: Hp - s.pts[1] * K, size: (s.size || 3) * K * 0.65, color: rgb(...c.rgb), opacity });
+    }
+  }
+  // text / shapes
+  for (const it of page.items || []) {
+    if (it.type === 'image') continue;
+    const d = it.data || {};
+    let done = false;
+    if (!it.rotation) {
+      try {
+        if (it.type === 'text') {
+          const size = (it.fontSize || d.fontSize || 18) * K;
+          const font = it.bold || d.bold ? fonts.bold : fonts.reg;
+          const col = parseColor(it.color || d.color || '#000');
+          const lines = wrapLines(winSafe(it.text ?? d.text ?? '', font), font, size, it.w * K);
+          let y = Hp - it.y * K - size;
+          for (const ln of lines) { if (ln) pg.drawText(ln, { x: it.x * K, y, size, font, color: rgb(...col.rgb), opacity: col.a }); y -= size * 1.3; }
+          done = true;
+        } else if (it.type === 'shape') {
+          const kind = it.shape || d.shape || it.kind || 'rect';
+          const col = parseColor(it.color || d.color || it.stroke || d.stroke || '#000');
+          const th = (it.strokeWidth || d.strokeWidth || it.size || 2) * K;
+          const fill = it.fill || d.fill; const fc = fill && fill !== 'none' ? parseColor(fill) : null;
+          if (kind === 'rect' || kind === 'rectangle') {
+            pg.drawRectangle({ x: it.x * K, y: Hp - (it.y + it.h) * K, width: it.w * K, height: it.h * K, borderColor: rgb(...col.rgb), borderWidth: th, color: fc ? rgb(...fc.rgb) : undefined, opacity: fc ? fc.a : undefined });
+            done = true;
+          } else if (kind === 'ellipse' || kind === 'circle') {
+            pg.drawEllipse({ x: (it.x + it.w / 2) * K, y: Hp - (it.y + it.h / 2) * K, xScale: it.w * K / 2, yScale: it.h * K / 2, borderColor: rgb(...col.rgb), borderWidth: th, color: fc ? rgb(...fc.rgb) : undefined, opacity: fc ? fc.a : undefined });
+            done = true;
+          } else if (kind === 'line') {
+            pg.drawLine({ start: { x: it.x * K, y: Hp - it.y * K }, end: { x: (it.x + it.w) * K, y: Hp - (it.y + it.h) * K }, thickness: th, color: rgb(...col.rgb) });
+            done = true;
+          }
+        }
+      } catch { /* raster fallback */ }
+    }
+    if (!done) extras.push(it);
+  }
+  if (extras.length) {
+    const c = document.createElement('canvas');
+    c.width = Math.round(W * scale); c.height = Math.round(H * scale);
+    const ctx = c.getContext('2d'); ctx.scale(scale, scale);
+    for (const it of extras) await drawItem(ctx, it);
+    const img = await out.embedPng(await (await canvasBlob(c)).arrayBuffer());
+    pg.drawImage(img, { x: 0, y: 0, width: W * K, height: Hp });
   }
 }
 
 /**
- * exportNote(note, fmt, opts)  fmt: 'pdf'|'png'|'md'|'json'|'txt'
- * opts: { flatten=false (true => rasterize PDF-imported pages with annotations; false => keep original PDF page
- *         content as vector and place annotations as a separate transparent layer), scale=2, onProgress }
- * PNG on multi-page notes downloads every page (page-1.png, ...).
+ * Build a PDF Blob for one note. Draw pages: vector template + vector ink (pressure outline polygons) + vector
+ * text/shapes/images. Imported PDF pages: original page embedded as vector content, ink on top.
+ * opts: { pageNumbers=false, flatten=false (raster fallback for PDF-imported pages), scale=2, includeText=true,
+ *         onProgress(done,total), signal }
  */
-export async function exportNote(note, fmt = 'pdf', opts = {}) {
-  try {
-    if (fmt === 'png' && (note.pages?.length || 0) > 1 && !opts.firstOnly) {
-      const base = safeName(note.title);
-      let i = 0;
-      for (const page of note.pages) {
-        const c = await renderPageToCanvas(page, note, { scale: opts.scale || 2 });
-        download(await canvasBlob(c), `${base}-${++i}.png`);
-        opts.onProgress?.(i, note.pages.length);
-        await new Promise((r) => setTimeout(r, 350));
+export async function buildNotePdf(note, opts = {}) {
+  const lib = await import('pdf-lib');
+  const { PDFDocument, StandardFonts, rgb, BlendMode } = lib;
+  const out = await PDFDocument.create();
+  out.setTitle(note.title || 'Untitled'); out.setProducer('Inkwell'); out.setCreator('Inkwell');
+  if (note.tags?.length) out.setKeywords(note.tags); 
+  out.setSubject(`${note.pages?.length || 0} page${note.pages?.length === 1 ? '' : 's'}`);
+  if (note.createdAt) out.setCreationDate(new Date(note.createdAt));
+  if (note.updatedAt) out.setModificationDate(new Date(note.updatedAt));
+  const fonts = {
+    reg: await out.embedFont(StandardFonts.Helvetica), bold: await out.embedFont(StandardFonts.HelveticaBold),
+    ital: await out.embedFont(StandardFonts.HelveticaOblique), mono: await out.embedFont(StandardFonts.Courier),
+  };
+  const L = { rgb, BlendMode };
+  const scale = opts.scale || 2;
+  const srcDocs = new Map();
+  const pages = note.pages || [];
+  const hasText = opts.includeText !== false && note.text && textBlocks(note.text).length;
+  const total = pages.length + (hasText ? 1 : 0);
+  let n = 0;
+  for (const page of pages) {
+    opts.signal?.throwIfAborted?.();
+    const W = page.width || 820, H = page.height || 1160;
+    const pg = out.addPage([W * K, H * K]);
+    let ok = false;
+    if (page.type === 'pdf' && page.pdfAssetId) {
+      if (!opts.flatten) {
+        try {
+          if (!srcDocs.has(page.pdfAssetId)) srcDocs.set(page.pdfAssetId, await PDFDocument.load(await (await getAsset(page.pdfAssetId)).blob.arrayBuffer()));
+          const [emb] = await out.embedPdf(srcDocs.get(page.pdfAssetId), [(page.pdfPage || 1) - 1]);
+          pg.drawPage(emb, { x: 0, y: 0, width: W * K, height: H * K });
+          ok = true;
+        } catch (e) { console.warn('vector pdf page failed, rasterizing', e); }
       }
-      return 'downloaded';
+      if (!ok) {
+        const c = await renderPageToCanvas({ ...page, strokes: [], items: [] }, note, { scale });
+        const img = await out.embedJpg(await (await canvasBlob(c, 'image/jpeg', 0.92)).arrayBuffer());
+        pg.drawImage(img, { x: 0, y: 0, width: W * K, height: H * K });
+      }
+    } else {
+      pdfTemplate(pg, W, H, page.bg || note.template || 'blank', note.paperColor || '#ffffff', L);
     }
-    const { blob, filename } = await buildNoteFile(note, fmt, opts);
-    return await deliver(blob, filename);
+    try { await drawPageItemsAndStrokes(out, pg, page, note, L, fonts, scale); }
+    catch (e) { console.warn('page annotations failed', e); }
+    if (opts.pageNumbers) {
+      const t = `${n + 1} / ${total}`;
+      pg.drawText(t, { x: W * K - 20 - fonts.reg.widthOfTextAtSize(t, 8), y: 12, size: 8, font: fonts.reg, color: rgb(0.45, 0.45, 0.5) });
+    }
+    opts.onProgress?.(++n, total);
+    if (n % 3 === 0) await tick();
+  }
+  if (hasText) {
+    const start = out.getPageCount();
+    addTextPages(out, note, fonts, L);
+    if (opts.pageNumbers) {
+      const all = out.getPages();
+      for (let i = start; i < all.length; i++) {
+        const t = `${i + 1} / ${all.length}`;
+        all[i].drawText(t, { x: 612 - 56 - fonts.reg.widthOfTextAtSize(t, 8), y: 24, size: 8, font: fonts.reg, color: rgb(0.45, 0.45, 0.5) });
+      }
+    }
+    opts.onProgress?.(++n, total);
+  }
+  if (!out.getPageCount()) out.addPage([612, 792]);
+  return new Blob([await out.save({ useObjectStreams: true })], { type: 'application/pdf' });
+}
+
+/** Export one note as a PDF (the only supported format). */
+export async function exportNote(note, fmt = 'pdf', opts = {}) {
+  if (fmt !== 'pdf') throw new Error('Only PDF export is supported.');
+  try {
+    const blob = await buildNotePdf(note, opts);
+    return await deliver(blob, safeName(note.title) + '.pdf');
   } catch (e) {
     console.error(e); toast('Export failed: ' + (e?.message || e)); throw e;
   }
 }
 
-/** Zip of every note in a notebook (and sub-notebooks). notebookId null => unfiled notes; 'all' => everything. */
-export async function exportNotebook(notebookId, fmt = 'pdf', opts = {}) {
+async function zipNotes(list, byId, opts, zipName) {
+  const pathOf = (id) => { const parts = []; let n = byId.get(id), g = 0; while (n && g++ < 20) { parts.unshift(safeName(n.name)); n = byId.get(n.parentId); } return parts.join('/'); };
+  const files = [];
+  let i = 0;
+  for (const n of list) {
+    try {
+      const blob = await buildNotePdf(n, { ...opts, onProgress: undefined });
+      const dir = n.notebookId ? pathOf(n.notebookId) : '';
+      files.push({ name: (dir ? dir + '/' : '') + safeName(n.title) + '.pdf', data: blob });
+    } catch (e) { console.warn('skip note', n.id, e); }
+    opts.onProgress?.(++i, list.length);
+    await tick();
+  }
+  return deliver(await makeZip(files), zipName + '.zip');
+}
+
+/** ZIP of PDFs for a notebook and its sub-notebooks (notebookId null => unfiled notes). */
+export async function exportNotebook(notebookId, opts = {}) {
+  if (typeof opts === 'string') opts = arguments[2] || {}; // tolerate legacy (id, fmt, opts)
   const [notebooks, notes] = await Promise.all([getAll('notebooks'), getAll('notes')]);
   const byId = new Map(notebooks.map((n) => [n.id, n]));
-  const pathOf = (id) => { const parts = []; let n = byId.get(id), g = 0; while (n && g++ < 20) { parts.unshift(safeName(n.name)); n = byId.get(n.parentId); } return parts.join('/'); };
   const inScope = (nbId) => {
-    if (notebookId === 'all') return true;
     if (notebookId === null) return !nbId;
     for (let n = byId.get(nbId), g = 0; n && g++ < 20; n = byId.get(n.parentId)) if (n.id === notebookId) return true;
     return false;
   };
   const list = notes.filter((n) => !n.trashedAt && inScope(n.notebookId));
   if (!list.length) { toast('Nothing to export'); return 'empty'; }
-  const files = []; let i = 0;
-  for (const n of list) {
-    try {
-      const { blob, filename } = await buildNoteFile(n, fmt, { ...opts, flatten: opts.flatten });
-      const dir = n.notebookId ? pathOf(n.notebookId) : '';
-      files.push({ name: (dir ? dir + '/' : '') + filename, data: blob });
-    } catch (e) { console.warn('skip note', n.id, e); }
-    opts.onProgress?.(++i, list.length);
-    await new Promise((r) => setTimeout(r));
-  }
-  const nb = byId.get(notebookId);
-  return deliver(await makeZip(files), safeName(nb?.name || (notebookId === 'all' ? 'Inkwell notes' : 'Inkwell')) + '.zip');
+  return zipNotes(list, byId, opts, safeName(byId.get(notebookId)?.name || 'Unfiled notes'));
 }
 
-// ---------------------------------------------------------------- encrypted backup
-const toB64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
-async function deriveKey(pass, salt, usage) {
-  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), 'PBKDF2', false, ['deriveKey']);
-  return crypto.subtle.deriveKey({ name: 'PBKDF2', salt, iterations: 250000, hash: 'SHA-256' }, base, { name: 'AES-GCM', length: 256 }, false, usage);
-}
-async function encryptBytes(bytes, pass) {
-  const salt = crypto.getRandomValues(new Uint8Array(16)), iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await deriveKey(pass, salt, ['encrypt']), bytes));
-  return JSON.stringify({ format: 'inkwell-encrypted', version: 1, kdf: 'PBKDF2-SHA256-250000', salt: toB64(salt), iv: toB64(iv), data: toB64(ct) });
-}
-async function decryptEnvelope(env, pass) {
-  try {
-    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64ToBytes(env.iv) }, await deriveKey(pass, b64ToBytes(env.salt), ['decrypt']), b64ToBytes(env.data));
-    return new TextDecoder().decode(pt);
-  } catch { const e = new Error('Wrong passphrase or corrupted backup.'); e.code = 'BAD_PASSPHRASE'; throw e; }
-}
-
-/** Full backup file. opts.passphrase => AES-GCM encrypted. Downloads and returns the Blob. */
+/** ZIP of PDFs for every (non-trashed) note, organized into folders by notebook. */
 export async function exportAll(opts = {}) {
-  const [notebooks, notes, assets] = await Promise.all([getAll('notebooks'), getAll('notes'), getAll('assets')]);
-  const env = await backupEnvelope(notes, notebooks, assets);
-  const json = JSON.stringify(env);
-  const stamp = new Date().toISOString().slice(0, 10);
-  let blob, name;
-  if (opts.passphrase) {
-    blob = new Blob([await encryptBytes(new TextEncoder().encode(json), opts.passphrase)], { type: 'application/json' });
-    name = `inkwell-backup-${stamp}.enc.json`;
-  } else { blob = new Blob([json], { type: 'application/json' }); name = `inkwell-backup-${stamp}.json`; }
-  if (opts.download !== false) await deliver(blob, name);
-  return blob;
+  const [notebooks, notes] = await Promise.all([getAll('notebooks'), getAll('notes')]);
+  const list = notes.filter((n) => !n.trashedAt);
+  if (!list.length) { toast('Nothing to export'); return 'empty'; }
+  return zipNotes(list, new Map(notebooks.map((n) => [n.id, n])), opts, 'Inkwell notes');
 }
-
-/**
- * Merge a backup (plain or encrypted) into the local DB. Newer updatedAt wins. Imported records are marked
- * dirty so sync pushes them. opts.passphrase for encrypted files (throws Error.code='PASSPHRASE_REQUIRED' if missing).
- * Returns { notebooks, notes, assets, skipped }.
- */
-export async function importBackup(file, opts = {}) {
-  let env;
-  try { env = JSON.parse(await file.text()); } catch { throw new Error('Not a valid Inkwell backup file.'); }
-  if (env?.format === 'inkwell-encrypted') {
-    if (!opts.passphrase) { const e = new Error('This backup is encrypted. Enter its passphrase.'); e.code = 'PASSPHRASE_REQUIRED'; throw e; }
-    env = JSON.parse(await decryptEnvelope(env, opts.passphrase));
-  }
-  if (env?.format !== 'inkwell-backup') throw new Error('Not a valid Inkwell backup file.');
-  const counts = { notebooks: 0, notes: 0, assets: 0, skipped: 0 };
-  const merge = async (store, rec, prep) => {
-    if (!rec?.id) { counts.skipped++; return; }
-    const cur = await getRecord(store, rec.id);
-    if (cur && (cur.updatedAt || 0) >= (rec.updatedAt || 0)) { counts.skipped++; return; }
-    const out = prep ? await prep(rec) : { ...rec };
-    out.updatedAt = rec.updatedAt || Date.now(); out.createdAt ||= out.updatedAt; out.deleted = !!out.deleted; out.dirty = 1;
-    await rawPut(store, out, { silent: true });
-    counts[store]++;
-  };
-  for (const nb of env.notebooks || []) await merge('notebooks', nb);
-  for (const a of env.assets || []) {
-    await merge('assets', a, async (r) => {
-      const { data, ...rest } = r;
-      if (data) rest.blob = new Blob([b64ToBytes(data)], { type: r.mime || 'application/octet-stream' });
-      return rest;
-    });
-  }
-  for (const n of env.notes || []) await merge('notes', n);
-  if (counts.notebooks) emit('notebooks:changed', { import: true });
-  if (counts.notes || counts.assets) emit('notes:changed', { import: true });
-  return counts;
-}
-
-export { newId as _newId };
