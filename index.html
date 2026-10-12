@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#f6f3ee" />
+  <meta name="description" content="Inkwell - offline-first handwriting and note-taking" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Inkwell" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Cpath d='M9 23l2-7 9-9 3 3-9 9z' fill='%23fff'/%3E%3C/svg%3E" />
+  <title>Inkwell</title>
+  <script>
+    // set theme before first paint to avoid a flash
+    try {
+      var s = JSON.parse(localStorage.getItem('inkwell:boot') || '{}');
+      if (s.theme) document.documentElement.setAttribute('data-theme', s.theme);
+      if (s.accent) document.documentElement.style.setProperty('--accent', s.accent);
+    } catch (e) {}
+  </script>
+</head>
+<body>
+  <div id="app"><div class="boot"><div class="boot-logo">Inkwell</div></div></div>
+  <div id="overlay-root"></div>
+  <noscript>Inkwell needs JavaScript to run.</noscript>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
