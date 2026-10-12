@@ -3,6 +3,7 @@ import { h } from '../core/utils.js';
 import { icon } from './icons.js';
 import { ibtn, popover } from './ui.js';
 import { paintPage } from './pages.js';
+import { paintTextPreview } from './preview.js';
 import { TEMPLATES, PAPER_COLORS } from './templates.js';
 
 export function pageMenu(anchor, engine, i) {
@@ -65,7 +66,9 @@ export function mountSidebar(host, engine) {
     c.width = Math.round(W * dpr); c.height = Math.round(pg.height * k * dpr);
     c.style.aspectRatio = pg.width + '/' + pg.height;
     const ctx = c.getContext('2d'); ctx.setTransform(k * dpr, 0, 0, k * dpr, 0, 0);
-    paintPage(ctx, engine.note, pg, { pdfCanvas: pv.cv.pdf, items: true });
+    const hasInk = pg.type === 'pdf' || pg.strokes.some((s) => !s.deleted) || pg.items.some((x) => !x.deleted);
+    if (i === 0 && !hasInk && (engine.note.text || '').replace(/<[^>]*>/g, '').trim()) { ctx.setTransform(dpr, 0, 0, dpr, 0, 0); paintTextPreview(ctx, engine.note, W, pg.height * k); }
+    else paintPage(ctx, engine.note, pg, { pdfCanvas: pv.cv.pdf, items: true });
   }
   function build() {
     io.disconnect(); list.replaceChildren(); items.length = 0;
@@ -91,7 +94,7 @@ export function mountSidebar(host, engine) {
     engine.on('change', (d) => {
       if (d.kind === 'pages') return;
       clearTimeout(timer);
-      timer = setTimeout(() => { const i = d.page ? engine.note.pages.indexOf(d.page) : -1; if (i >= 0) draw(i); else items.forEach((_, j) => draw(j)); }, 450);
+      timer = setTimeout(() => { const i = d.page ? engine.note.pages.indexOf(d.page) : -1; if (i >= 0) draw(i); else items.forEach((_, j) => draw(j)); }, d.kind === 'text' ? 250 : 450);
     }),
   ];
   build();

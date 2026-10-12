@@ -16,7 +16,8 @@ export function paintTextPreview(ctx, note, W, H) {
   const ink = dark ? '#eee' : '#1f2937', sub = dark ? '#aaa' : '#6b7280', pad = W * 0.07, maxW = W - pad * 2;
   let y = pad;
   ctx.textBaseline = 'top'; ctx.fillStyle = ink;
-  if (note.title) { ctx.font = `700 ${W * 0.075}px system-ui, sans-serif`; for (const l of wrap(ctx, note.title, maxW).slice(0, 2)) { ctx.fillText(l, pad, y); y += W * 0.095; } y += W * 0.02; }
+  const firstH = (() => { const d0 = document.createElement('div'); d0.innerHTML = note.text || ''; return (d0.querySelector('h1,h2,h3')?.textContent || '').trim().toLowerCase(); })();
+  if (note.title && firstH !== note.title.trim().toLowerCase()) { ctx.font = `700 ${W * 0.075}px system-ui, sans-serif`; for (const l of wrap(ctx, note.title, maxW).slice(0, 2)) { ctx.fillText(l, pad, y); y += W * 0.095; } y += W * 0.02; }
   const d = document.createElement('div'); d.innerHTML = note.text || '';
   const blocks = [...d.querySelectorAll('h1,h2,h3,p,li,div')].filter((b) => !b.querySelector('h1,h2,h3,p,li,div'));
   for (const b of blocks) {

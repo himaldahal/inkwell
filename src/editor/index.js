@@ -97,12 +97,13 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       dirty = false;
       try {
         note.textIndex = indexText();
-        if (previewDirty) { previewDirty = false; note.preview = makePreview() || note.preview; }
+        if (previewDirty) { previewDirty = false; note.preview = makePreview() || note.preview; note.previewV = 2; }
       } catch (e) { console.error(e); }
       saving = putRecord('notes', note).catch((e) => { dirty = true; console.error('save failed', e); });
       return saving;
     };
     const save = debounce(doSave, 600);
+    if (!readOnly && note.previewV !== 2) { dirty = previewDirty = true; save(); } // refresh previews made by older versions once
     const touch = (page) => { dirty = true; if (!page || page === note.pages[0]) previewDirty = true; save(); };
     const origTextChange = null; void origTextChange;
     engine.on('change', (d) => touch(d.page));
@@ -150,7 +151,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       dictate: (b, root) => import('./voice.js').then((m) => m.toggleDictation(() => root, (on) => b.classList.toggle('rec', on))),
     };
     const textLayer = mountTextLayer(textHost, note, { hooks, onChange: () => {
-      dirty = true; previewDirty = true; save();
+      dirty = true; previewDirty = true; save(); engine.emit('change', { kind: 'text' });
       if (opCbs.size) { clearTimeout(textOpT); textOpT = setTimeout(() => opCbs.forEach((cb) => cb([{ type: 'text', pageId: null, data: note.text }])), 400); }
     } });
     engine.on('remoteText', (html) => { if (!textLayer.el.contains(document.activeElement)) { note.text = html; baseText = html; textLayer.setHtml(html); dirty = true; save(); } });
