@@ -57,6 +57,9 @@ fi
 say "Database"
 ( cd "$BACKEND" && python manage.py migrate --noinput )
 
+say "Static files"
+( cd "$BACKEND" && python manage.py collectstatic --noinput -v0 ) && echo "collectstatic done (backend/staticfiles)"
+
 if [[ -n "$EMAIL" && -n "$PASSWORD" ]]; then
   say "Superuser $EMAIL"
   ( cd "$BACKEND" && python manage.py create_admin --email "$EMAIL" --password "$PASSWORD" --superuser ) \
