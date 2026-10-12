@@ -8,14 +8,14 @@ export const MODULES = [
   { id: 'ocr', name: 'Handwriting search (OCR)', description: 'Make handwriting searchable. Downloads a recognition model.', default: false, deps: [], network: true },
   { id: 'tts', name: 'Read aloud', description: 'Have notes read to you with the device voice.', default: true, deps: [] },
   { id: 'dictation', name: 'Dictation', description: 'Speak to type. Uses the browser speech service, which may need a connection.', default: false, deps: [], network: true },
-  { id: 'embeds', name: 'Embeds', description: 'Embed web content and videos in notes.', default: false, deps: [], network: true },
-  { id: 'sketch', name: 'Sketch board (Excalidraw-style)', description: 'Diagrams and whiteboards inside notes.', default: false, deps: [] },
+  { id: 'embeds', name: 'Embeds', description: 'Embed web content and videos in notes.', default: true, deps: [], network: true },
+  { id: 'sketch', name: 'Sketch board (Excalidraw-style)', description: 'Diagrams and whiteboards inside notes.', default: true, deps: [] },
   { id: 'toc', name: 'Table of contents', description: 'Outline panel built from headings.', default: true, deps: [] },
   { id: 'collab', name: 'Collaboration and presence', description: 'See who is editing and edit together.', default: true, deps: [], network: true },
   { id: 'rtc', name: 'Live calls', description: 'Voice and video while collaborating.', default: false, deps: ['collab'], network: true },
   { id: 'e2ee', name: 'End-to-end encryption', description: 'Encrypt synced notes with your passphrase.', default: false, deps: [] },
-  { id: 'study', name: 'CA Study Hub', description: 'Planner, revision, flashcards, mock tests and calculators for CA exams.', default: false, deps: [] },
-  { id: 'fonts', name: 'Extra fonts', description: 'Additional handwriting and typing fonts.', default: false, deps: [], network: true },
+  { id: 'study', name: 'CA Study Hub', description: 'Planner, revision, flashcards, mock tests and calculators for CA exams.', default: true, deps: [] },
+  { id: 'fonts', name: 'Extra fonts', description: 'Additional handwriting and typing fonts.', default: true, deps: [], network: true },
 ];
 const byId = new Map(MODULES.map((m) => [m.id, m]));
 const impls = new Map();       // id -> { init, destroy, live }
