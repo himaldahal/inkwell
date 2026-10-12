@@ -229,7 +229,7 @@ export function shareInfo(n) {
     incoming: !!n.sharedBy, outgoing,
     public: !!(n.publicLink || n.publicToken || n.isPublic || sh.public || sh.token),
     protectedLink: !!(n.publicPassword || n.passwordProtected || sh.password || sh.passwordProtected),
-    canEdit: role === 'editor' || role === 'edit' || role === 'can-edit',
-    viewOnly: role === 'viewer' || role === 'view' || role === 'view-only',
+    canEdit: role === 'editor' || role === 'write' || role === 'edit' || role === 'can-edit',
+    viewOnly: role === 'viewer' || role === 'read' || role === 'view' || role === 'view-only',
   };
 }
