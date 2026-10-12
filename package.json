@@ -1,0 +1,23 @@
+{
+  "name": "inkwell",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Inkwell – offline-first handwriting & note-taking PWA with cloud sync",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview --host",
+    "server": "node server/index.js",
+    "start": "npm run build && node server/index.js"
+  },
+  "dependencies": {
+    "pdfjs-dist": "^4.10.38",
+    "pdf-lib": "^1.17.1",
+    "idb": "^8.0.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.11",
+    "vite-plugin-pwa": "^0.21.1"
+  }
+}
