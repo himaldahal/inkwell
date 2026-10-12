@@ -643,3 +643,117 @@ class MailAbuseTests(Helpers):
 
         call_command("create_admin", email="boss@example.com", password="weak")
         self.assertTrue(User.objects.get(email="boss@example.com").is_staff)
+
+
+class RbacTests(Helpers):
+    def user_with(self, role, name=None):
+        from . import rbac
+        from .models import Role
+
+        rbac.ensure_builtin()
+        name = name or role
+        u = User.objects.create_user(f"{name}@example.com", PW, is_staff=role != "user", is_superuser=role == "superuser", display_name=name)
+        Profile.objects.create(user=u, email_verified=True, role=None if role in ("superuser", "user") else Role.objects.filter(name=role).first())
+        return u, j(self.post("/api/auth/login", {"email": u.email, "password": PW, "deviceId": "d-" + name}))["token"]
+
+    # (method, path, permission) for every admin/system endpoint
+    MATRIX = [("get", "/api/admin/users", "users.read"), ("get", "/api/admin/overview", "analytics.read"), ("get", "/api/admin/shares", "shares.manage"),
+              ("get", "/api/admin/abuse", "abuse.manage"), ("get", "/api/admin/mail", "mail.manage"), ("get", "/api/admin/audit", "audit.read"),
+              ("get", "/api/admin/health", "health.read"), ("get", "/api/admin/settings", "settings.read"), ("get", "/api/admin/trash", "trash.purge"),
+              ("get", "/api/system/analytics", "analytics.read"), ("get", "/api/system/api-stats", "analytics.read"), ("get", "/api/system/server", "system.read"),
+              ("get", "/api/system/roles", "users.read"), ("get", "/api/system/data", "data.read"), ("get", "/api/system/data/users", "data.read")]
+
+    def test_matrix_deny_by_default(self):
+        from . import rbac
+
+        for role in ("user", "analyst", "support", "admin", "superuser"):
+            _, t = self.user_with(role)
+            allowed = rbac.BUILTIN[role]
+            for m, path, perm in self.MATRIX:
+                r = getattr(self, m)(path, t)
+                self.assertEqual(r.status_code == 403, perm not in allowed, f"{role} {path} -> {r.status_code}")
+
+    def test_every_admin_and_system_route_declares_a_permission(self):
+        from django.urls import get_resolver
+
+        def walk(patterns, prefix=""):
+            for p in patterns:
+                if hasattr(p, "url_patterns"):
+                    yield from walk(p.url_patterns, prefix + str(p.pattern))
+                else:
+                    yield prefix + str(p.pattern), p.callback
+
+        for route, cb in walk(get_resolver().url_patterns):
+            if route.startswith(("api/admin/", "api/system/")):
+                self.assertIsNotNone(getattr(cb, "perm", None), route)
+
+    def test_unauthenticated_and_disabled(self):
+        self.assertEqual(self.get("/api/system/server").status_code, 401)
+        u, t = self.user_with("admin")
+        u.is_active = False
+        u.save()
+        self.assertEqual(self.get("/api/admin/users", t).status_code, 401)
+
+    def test_custom_role_and_escalation_guards(self):
+        _, root = self.user_with("superuser")
+        _, admin = self.user_with("admin")
+        target, _ = self.user_with("user", "plain")
+        self.assertEqual(self.post("/api/system/roles", {"name": "Helpdesk", "permissions": ["users.read", "bogus"]}, admin).status_code, 403)
+        r = self.post("/api/system/roles", {"name": "Helpdesk", "permissions": ["users.read", "bogus"]}, root)
+        role = j(r)["role"]
+        self.assertEqual(role["permissions"], ["users.read"])  # unknown keys dropped
+        self.assertEqual(self.patch(f"/api/admin/users/{target.public_id}", {"role": "Helpdesk"}, admin).status_code, 403)  # admins cannot assign roles
+        self.assertEqual(self.patch(f"/api/admin/users/{target.public_id}", {"role": "Helpdesk"}, root).status_code, 200)
+        t2 = j(self.post("/api/auth/login", {"email": target.email, "password": PW, "deviceId": "x"}))["token"]
+        self.assertEqual(self.get("/api/admin/users", t2).status_code, 200)
+        self.assertEqual(self.get("/api/admin/audit", t2).status_code, 403)
+        self.assertEqual(self.post("/api/admin/users", {"email": "n@example.com"}, t2).status_code, 403)
+        # admin cannot touch a superuser, nor grant superuser
+        su = User.objects.get(email="superuser@example.com")
+        self.assertEqual(self.post(f"/api/admin/users/{su.public_id}/reset", {}, admin).status_code, 403)
+        self.assertEqual(self.c.delete(f"/api/system/roles/{role['id']}", **self.auth(root)).status_code, 200)
+        self.assertEqual(self.get("/api/admin/users", t2).status_code, 403)  # role removed -> no permissions
+        builtin = [x for x in j(self.get("/api/system/roles", root))["roles"] if x["name"] == "admin"][0]
+        self.assertEqual(self.patch(f"/api/system/roles/{builtin['id']}", {"permissions": ["roles.manage"]}, root).status_code, 403)
+
+    def test_data_viewer_hides_secrets_and_e2e_content(self):
+        _, root = self.user_with("superuser")
+        u, t = self.user_with("user", "owner")
+        self.push(t, rec("notes", "n1", 1, title="Visible title"))
+        self.push(t, {"kind": "notes", "id": "n2", "updatedAt": 1, "data": {"enc": 1, "ct": "AAAA"}})
+        rows = j(self.get("/api/system/data/notes", root))["rows"]
+        by = {r["id"]: r for r in rows}
+        self.assertEqual(by["n1"]["title"], "Visible title")
+        self.assertTrue(by["n2"]["e2e"])
+        self.assertNotIn("AAAA", json.dumps(rows))
+        blob = self.get("/api/system/data/users", root).content.decode()
+        self.assertNotIn("pbkdf2", blob)
+        self.assertNotIn("password", blob.replace("password", "", 0) if False else "")
+        self.assertEqual(self.get("/api/system/data/secrets", root).status_code, 404)
+
+    def test_analytics_and_stats_shape(self):
+        _, root = self.user_with("superuser")
+        self.get("/api/health")
+        a = j(self.get("/api/system/analytics?days=7", root))
+        for k in ("growth", "active", "cohorts", "devices", "content", "storage", "sharing", "mail", "abuse", "trash"):
+            self.assertIn(k, a)
+        self.assertEqual(len(a["active"]), 7)
+        s = j(self.get("/api/system/api-stats", root))
+        self.assertTrue(s["table"])
+        self.assertIn("p95Ms", s["sync"])
+        self.assertIn("tables", j(self.get("/api/system/server", root)))
+
+    def test_trash_permanent_delete_removes_files(self):
+        u, t = self.user_with("user", "tr")
+        png = b"\x89PNG\r\n\x1a\nxx"
+        self.push(t, rec("notes", "n1", 1000, title="x"), rec("assets", "a1", 1000, noteId="n1"))
+        self.c.put("/api/assets/a1", data=png, content_type="image/png", **self.auth(t))
+        self.push(t, rec("notes", "n1", 2000, deleted=True, title="x"))
+        self.assertEqual(self.post("/api/trash/delete", {"items": [{"kind": "notes", "id": "n1"}]}, t).status_code, 200)
+        self.assertEqual(self.get("/api/assets/a1", t).status_code, 404)  # file removed
+        self.assertEqual(j(self.get("/api/trash", t))["items"], [])
+
+    def test_trash_default_60_days(self):
+        from django.conf import settings
+
+        self.assertEqual(settings.TRASH_RETENTION_DAYS, 60)

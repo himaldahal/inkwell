@@ -30,11 +30,18 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 32 * 1024 * 1024,
         navigateFallback: 'index.html',
         navigateFallbackDenylist: [/^\/api\//, /^\/admin\//, /^\/django-static\//, /^\/share-target/, /^\/s\//],
+        // OCR worker + ~5 MB wasm core are NOT precached (small install); they are cached on first use (runtime route below)
+        globIgnores: ['**/assets/worker.min-*.js', '**/assets/tesseract-core*'],
         cleanupOutdatedCaches: true,
         clientsClaim: false, // new versions activate only after the user accepts the update toast
         skipWaiting: false,
         importScripts: ['sw-sync.js'],
         runtimeCaching: [
+          {
+            urlPattern: ({ url }) => (url.origin === self.location.origin && /\/assets\/(worker\.min|tesseract-core)[^/]*\.js$/.test(url.pathname)) || url.hostname === 'tessdata.projectnaptha.com',
+            handler: 'CacheFirst',
+            options: { cacheName: 'inkwell-ocr', expiration: { maxEntries: 24, maxAgeSeconds: 60 * 60 * 24 * 180, purgeOnQuotaError: true }, cacheableResponse: { statuses: [0, 200] }, rangeRequests: true },
+          },
           { urlPattern: ({ url }) => url.pathname.startsWith('/api/'), handler: 'NetworkOnly' },
           {
             urlPattern: ({ request }) => request.destination === 'image' || request.destination === 'font',

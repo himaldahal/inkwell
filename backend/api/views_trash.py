@@ -2,7 +2,7 @@ from django.http import JsonResponse
 
 from . import access, trash
 from .models import Record
-from .util import api, err
+from .util import api, err, parse_json
 
 
 def _own_deleted(user):
@@ -32,3 +32,14 @@ def trash_purge(request, kind, rid):
 @api(("POST",))
 def trash_empty(request):
     return JsonResponse({"ok": True, "purged": trash.purge_qs(_own_deleted(request.user))})
+
+
+@api(("POST",))
+def trash_delete_many(request):
+    """Permanently delete a selection right now (also removes attachment files)."""
+    items = (parse_json(request) or {}).get("items") or []
+    n = 0
+    for it in items[:500]:
+        if isinstance(it, dict) and it.get("kind") in ("notes", "notebooks"):
+            n += trash.purge_qs(_own_deleted(request.user).filter(kind=it["kind"], record_id=str(it.get("id"))[:64]))
+    return JsonResponse({"ok": True, "purged": n})

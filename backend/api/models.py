@@ -154,6 +154,45 @@ class AssetBlob(models.Model):
         unique_together = [("user", "asset_id")]
 
 
+class Role(models.Model):
+    uid = models.CharField(max_length=32, unique=True, default=new_uid)
+    name = models.CharField(max_length=40, unique=True)
+    builtin = models.BooleanField(default=False)
+    permissions = models.TextField(default="[]")  # JSON list of permission keys
+    created_at = models.DateTimeField(default=timezone.now)
+
+
+class ActiveDay(models.Model):
+    """One row per user per active day (DAU/WAU/MAU and retention)."""
+
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="+")
+    day = models.DateField(db_index=True)
+
+    class Meta:
+        unique_together = [("user", "day")]
+
+
+class ApiStat(models.Model):
+    """Hourly per-endpoint counters + latency histogram (percentiles), written by a light middleware."""
+
+    hour = models.BigIntegerField(db_index=True)  # epoch hours
+    endpoint = models.CharField(max_length=80)
+    count = models.PositiveIntegerField(default=0)
+    errors = models.PositiveIntegerField(default=0)  # 5xx
+    denied = models.PositiveIntegerField(default=0)  # 401/403/429
+    ms_sum = models.BigIntegerField(default=0)
+    b10 = models.PositiveIntegerField(default=0)
+    b50 = models.PositiveIntegerField(default=0)
+    b100 = models.PositiveIntegerField(default=0)
+    b250 = models.PositiveIntegerField(default=0)
+    b500 = models.PositiveIntegerField(default=0)
+    b1000 = models.PositiveIntegerField(default=0)
+    bmore = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        unique_together = [("hour", "endpoint")]
+
+
 class Plan(models.Model):
     """Storage/note limits. Editable in the admin; the one flagged default applies to users without a plan."""
 
@@ -179,6 +218,7 @@ class Plan(models.Model):
 class Profile(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="profile")
     plan = models.ForeignKey(Plan, null=True, blank=True, on_delete=models.SET_NULL)
+    role = models.ForeignKey(Role, null=True, blank=True, on_delete=models.SET_NULL, related_name="+")
     storage_mb_override = models.PositiveIntegerField(null=True, blank=True)
     max_notes_override = models.PositiveIntegerField(null=True, blank=True)
     email_verified = models.BooleanField(default=False)

@@ -73,6 +73,7 @@ class SecurityHeadersMiddleware:
                 f"default-src 'self'; script-src 'self' 'wasm-unsafe-eval' {inline_script_hashes()}; "
                 "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: data:; "
                 "font-src 'self' data:; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; "
-                f"connect-src {settings.CSP_CONNECT_SRC}; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
+                f"frame-src {' '.join('https://' + h for h in settings.EMBED_HOSTS) or chr(39) + 'none' + chr(39)}; "
+                f"connect-src {settings.CSP_CONNECT_SRC} https://tessdata.projectnaptha.com; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
             )
         return resp

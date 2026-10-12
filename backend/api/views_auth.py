@@ -11,7 +11,7 @@ from django.db import transaction
 from django.http import FileResponse, JsonResponse
 from django.utils import timezone
 
-from . import access, emails, pow as powmod, quota, runtime, security, totp, validate
+from . import access, emails, rbac, pow as powmod, quota, runtime, security, totp, validate
 from .audit import audit
 from .models import AssetBlob, Cooldown, Device, EmailToken, Profile, Record, Token, hash_key, new_uid, now_ms
 from .useragent import parse_ua
@@ -56,7 +56,7 @@ def _device_for(request, user, body):
 def user_json(u):
     p = Profile.of(u)
     return {"id": u.public_id, "email": u.email, "displayName": u.display_name, "name": u.display, "avatar": p.avatar_id or None,
-            "isStaff": u.is_staff, "twoFactor": p.totp_enabled, "emailVerified": p.email_verified, "mustChangePassword": p.must_change_password}
+            "isStaff": u.is_staff, "role": rbac.role_of(u), "permissions": sorted(rbac.perms_of(u)), "twoFactor": p.totp_enabled, "emailVerified": p.email_verified, "mustChangePassword": p.must_change_password}
 
 
 def _session(request, user, body, event="login"):

@@ -1,5 +1,6 @@
 """Server-side trash. Deleting = tombstone (kept for sync) whose content stays restorable for TRASH_RETENTION_DAYS."""
 import json
+import os
 from datetime import timedelta
 
 from django.conf import settings
@@ -18,11 +19,28 @@ def purge_expired(days=None, user=None):
 
 
 def purge_qs(qs):
+    """Permanently wipe content of deleted records, including the attachment files of purged notes."""
+    from .models import AssetBlob, now_ms
+
     n = 0
-    for r in qs.exclude(data="{}"):
+    for r in list(qs.exclude(data="{}")):
+        if r.kind == "notes":
+            kids = Record.objects.filter(user_id=r.user_id, kind="assets", parent_id=r.record_id)
+            for a in kids:
+                for blob in AssetBlob.objects.filter(user_id=r.user_id, asset_id=a.record_id):
+                    try:
+                        os.remove(blob.path)
+                    except OSError:
+                        pass
+                    blob.delete()
+            kids.update(data="{}", deleted=True)
         r.data = "{}"
         r.save(update_fields=["data"])
         n += 1
+    if n:
+        from .models import AuditLog
+
+        AuditLog.objects.create(event="trash.purge", detail=f"{n} record(s)")
     return n
 
 
@@ -38,6 +56,9 @@ def maybe_cleanup():
     if settings.TRASH_RETENTION_DAYS and cache.add("trash:gc", 1, 3600):
         try:
             purge_expired()
+            from . import runtime
+
+            runtime.put("last_trash_gc", now_ms())
         except Exception:  # noqa: BLE001
             pass
 

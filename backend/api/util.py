@@ -83,6 +83,9 @@ def authenticate(request):
     if not t or not t.user.is_active:
         return None
     now = timezone.now()
+    if not cache.get(f"act:{t.user_id}:{now.date()}"):  # cheap per-day marker
+        _mark_active(t.user, now)
+        cache.set(f"act:{t.user_id}:{now.date()}", 1, 86400)
     if t.expires_at <= now:
         t.delete()
         return None
@@ -93,15 +96,16 @@ def authenticate(request):
         t.last_used = now
         t.expires_at = now + timedelta(days=settings.TOKEN_TTL_DAYS)
         t.save(update_fields=["last_used", "expires_at"])
+        _mark_active(t.user, now)
         if t.device_id:
             t.device.last_seen = now
             t.device.save(update_fields=["last_seen"])
     return t
 
 
-def api(methods=("GET",), auth=True, staff=False, pw_ok=False):
+def api(methods=("GET",), auth=True, perm=None, pw_ok=False):
     """CSRF-exempt token API view with method check, auth and light rate limiting.
-    staff=True: administrators only. pw_ok=True: reachable while a password change is still required."""
+    perm="x.y" (or {method: perm}): RBAC permission required. pw_ok=True: reachable while a password change is still required."""
 
     def deco(fn):
         @csrf_exempt
@@ -118,8 +122,12 @@ def api(methods=("GET",), auth=True, staff=False, pw_ok=False):
                 if not hit(f"tok:{t.pk}", settings.RATE_LIMIT_API, 60, db=False):
                     return err("rate limited", 429)
                 request.user, request.token = t.user, t
-                if staff and not t.user.is_staff:
-                    return err("forbidden", 403)
+                if perm is not None:
+                    from . import rbac
+
+                    need = perm.get(request.method) if isinstance(perm, dict) else perm
+                    if not need or not rbac.has_perm(t.user, need):
+                        return err("forbidden", 403)
                 if not pw_ok:
                     from .models import Profile
 
@@ -127,6 +135,7 @@ def api(methods=("GET",), auth=True, staff=False, pw_ok=False):
                         return err("password change required", 403, code="password-change-required")
             return fn(request, *a, **kw)
 
+        wrapper.perm = perm
         return wrapper
 
     return deco
@@ -163,3 +172,9 @@ def avatar_of(u):
         return Profile.of(u).avatar_id or None
     except Exception:  # noqa: BLE001
         return None
+
+
+def _mark_active(user, now):
+    from .models import ActiveDay
+
+    ActiveDay.objects.get_or_create(user=user, day=now.date())

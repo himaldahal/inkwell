@@ -80,6 +80,9 @@ def flush_queue(limit=5):
     from .util import hit
 
     sent = 0
+    from . import runtime
+
+    runtime.put("last_mail_flush", int(timezone.now().timestamp() * 1000))
     for m in MailQueue.objects.filter(status="queued").order_by("id")[:limit]:
         if not hit("mail-send-min", settings.MAIL_PER_MINUTE, 60):
             break

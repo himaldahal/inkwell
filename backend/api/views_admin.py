@@ -2,7 +2,7 @@ from django.contrib.auth import get_user_model
 from django.db.models import Count, Q
 from django.http import JsonResponse
 
-from . import quota
+from . import quota, rbac
 from .audit import audit
 from .models import AuditLog, Device, Plan, Profile, Token
 from .util import api, err, parse_json
@@ -14,7 +14,7 @@ User = get_user_model()
 def _u(u):
     p = Profile.of(u)
     return {
-        "id": u.public_id, "email": u.email, "displayName": u.display_name, "isActive": u.is_active, "isStaff": u.is_staff,
+        "id": u.public_id, "email": u.email, "displayName": u.display_name, "isActive": u.is_active, "isStaff": u.is_staff, "role": rbac.role_of(u),
         "emailVerified": p.email_verified, "mustChangePassword": p.must_change_password,
         "lastLogin": u.last_login.isoformat() if u.last_login else None, "dateJoined": u.date_joined.isoformat(),
         "planId": p.plan_id, "plan": p.plan.name if p.plan else Plan.default().name,
@@ -24,7 +24,29 @@ def _u(u):
     }
 
 
-@api(("GET", "POST"), staff=True)
+def _set_role(actor, u, name):
+    """Assign a role (needs roles.manage; only a superuser may grant or touch superuser)."""
+    from .models import Role
+
+    if not rbac.has_perm(actor, "roles.manage"):
+        return "forbidden"
+    rbac.ensure_builtin()
+    r = Role.objects.filter(name=name).first() or Role.objects.filter(uid=str(name)[:32]).first()
+    if not r:
+        return "unknown role"
+    if (r.name == "superuser" or rbac.role_of(u) == "superuser") and not actor.is_superuser:
+        return "only a superuser can do that"
+    if u.pk == actor.pk and r.name != rbac.role_of(u):
+        return "you cannot change your own role"
+    u.is_superuser = r.name == "superuser"
+    u.is_staff = r.name != "user"
+    u.save()
+    Profile.of(u)
+    Profile.objects.filter(user=u).update(role=None if r.name in ("superuser", "user") else r)
+    return None
+
+
+@api(("GET", "POST"), perm={"GET": "users.read", "POST": "users.write"})
 def users(request):
     if request.method == "GET":
         qs = User.objects.order_by("email")
@@ -56,21 +78,28 @@ def users(request):
     msg = _check_password(pw, User(email=email))
     if msg:
         return err(msg)
-    u = User.objects.create_user(email=email, password=pw, is_staff=bool(b.get("isStaff")), display_name=str(b.get("displayName") or "")[:60])
+    u = User.objects.create_user(email=email, password=pw, display_name=str(b.get("displayName") or "")[:60])
     Profile.objects.create(user=u, email_verified=True, must_change_password=True, plan_id=b.get("planId") or None,
                            storage_mb_override=b.get("storageMb"))
     from . import access
 
+    if b.get("role"):
+        bad = _set_role(request.user, u, b["role"])
+        if bad:
+            u.delete()
+            return err(bad, 403)
     access.claim_invites(u)
     audit(request, "admin.create_user", u, f"by {request.user.email}")
     return JsonResponse({"user": _u(u), "tempPassword": pw}, status=201)
 
 
-@api(("PATCH", "POST", "DELETE"), staff=True)
+@api(("PATCH", "POST", "DELETE"), perm={"PATCH": "users.write", "POST": "users.write", "DELETE": "users.delete"})
 def user_detail(request, uid):
     u = User.objects.filter(public_id=str(uid)[:32]).first()
     if not u:
         return err("not found", 404)
+    if rbac.role_of(u) == "superuser" and not request.user.is_superuser:
+        return err("only a superuser can edit a superuser", 403)
     if request.method == "DELETE":
         if u.pk == request.user.pk:
             return err("you cannot delete yourself")
@@ -86,10 +115,11 @@ def user_detail(request, uid):
         u.is_active = bool(b["isActive"])
         if not u.is_active:
             Token.objects.filter(user=u).delete()
-    if "isStaff" in b:
-        if u.pk == request.user.pk and not b["isStaff"]:
-            return err("you cannot remove your own admin role")
-        u.is_staff = bool(b["isStaff"])
+    if "role" in b:
+        bad = _set_role(request.user, u, b["role"])
+        if bad:
+            return err(bad, 403)
+        p.refresh_from_db()  # _set_role changed the profile row
     if "displayName" in b:
         u.display_name = str(b["displayName"] or "")[:60]
     if "email" in b:  # only staff can change an account's e-mail
@@ -109,11 +139,13 @@ def user_detail(request, uid):
     return JsonResponse({"user": _u(u)})
 
 
-@api(("POST",), staff=True)
+@api(("POST",), perm="users.write")
 def reset_password(request, uid):
     u = User.objects.filter(public_id=str(uid)[:32]).first()
     if not u:
         return err("not found", 404)
+    if rbac.role_of(u) == "superuser" and not request.user.is_superuser:
+        return err("only a superuser can edit a superuser", 403)
     pw = temp_password()
     u.set_password(pw)
     u.save()
@@ -124,7 +156,7 @@ def reset_password(request, uid):
     return JsonResponse({"tempPassword": pw, "user": _u(u)})
 
 
-@api(("GET",), staff=True)
+@api(("GET",), perm="audit.read")
 def audit_log(request):
     try:
         limit = min(500, int(request.GET.get("limit", 100)))
@@ -136,7 +168,7 @@ def audit_log(request):
          "actor": r.actor, "detail": r.detail, "ip": r.ip} for r in rows]})
 
 
-@api(("GET",), staff=True)
+@api(("GET",), perm="analytics.read")
 def stats(request):
     return JsonResponse({"users": User.objects.count(), "active": User.objects.filter(is_active=True).count(),
                          "storageBytes": sum(quota.used_bytes(u) for u in User.objects.all()),
@@ -157,7 +189,7 @@ from django.http import HttpResponse  # noqa: E402
 from django.utils import timezone  # noqa: E402
 
 from . import runtime, trash  # noqa: E402
-from .models import AbuseReport, Block, Lockout, LoginEvent, PublicLink, Record, Share  # noqa: E402
+from .models import now_ms, AbuseReport, Block, Lockout, LoginEvent, PublicLink, Record, Share  # noqa: E402
 from .util import hit  # noqa: E402,F401
 
 
@@ -169,7 +201,7 @@ def _series(qs, field, days=30):
     return [{"date": str(today - timedelta(days=i)), "n": by.get(today - timedelta(days=i), 0)} for i in range(days - 1, -1, -1)]
 
 
-@api(("GET",), staff=True)
+@api(("GET",), perm="analytics.read")
 def overview(request):
     now = timezone.now()
     return JsonResponse({
@@ -189,7 +221,7 @@ def overview(request):
     })
 
 
-@api(("GET",), staff=True)
+@api(("GET",), perm="users.read")
 def user_full(request, uid):
     u = User.objects.filter(public_id=str(uid)[:32]).first()
     if not u:
@@ -203,7 +235,7 @@ def user_full(request, uid):
     return JsonResponse({"user": _u(u), "devices": devs, "history": hist, "shares": shares})
 
 
-@api(("POST",), staff=True)
+@api(("POST",), perm="users.reset_sessions")
 def revoke_sessions(request, uid):
     u = User.objects.filter(public_id=str(uid)[:32]).first()
     if not u:
@@ -217,7 +249,7 @@ def revoke_sessions(request, uid):
     return JsonResponse({"ok": True})
 
 
-@api(("POST",), staff=True)
+@api(("POST",), perm="users.reset_sessions")
 def send_reset_email(request, uid):
     from . import emails
     from .models import EmailToken
@@ -232,7 +264,7 @@ def send_reset_email(request, uid):
     return JsonResponse({"ok": ok})
 
 
-@api(("GET",), staff=True)
+@api(("GET",), perm="shares.manage")
 def shares_overview(request):
     shares = [{"id": s.uid, "owner": s.owner.email, "to": s.recipient.email, "kind": s.kind, "recordId": s.record_id,
                "role": s.role, "viaLink": s.via_link, "expiresAt": s.expires_at.isoformat() if s.expires_at else None}
@@ -244,7 +276,7 @@ def shares_overview(request):
     return JsonResponse({"shares": shares, "links": links})
 
 
-@api(("POST", "DELETE"), staff=True)
+@api(("POST", "DELETE"), perm="shares.manage")
 def share_admin(request, share_id):
     s = Share.objects.filter(uid=share_id).first()
     if not s:
@@ -254,7 +286,7 @@ def share_admin(request, share_id):
     return JsonResponse({"ok": True})
 
 
-@api(("POST",), staff=True)
+@api(("POST",), perm="shares.manage")
 def link_admin(request, link_id):
     l = PublicLink.objects.filter(uid=link_id).first()
     if not l:
@@ -280,7 +312,7 @@ def link_admin(request, link_id):
     return JsonResponse({"ok": True})
 
 
-@api(("GET", "POST"), staff=True)
+@api(("GET", "POST"), perm="abuse.manage")
 def abuse(request):
     if request.method == "POST":
         b = parse_json(request) or {}
@@ -310,7 +342,7 @@ def abuse(request):
     })
 
 
-@api(("DELETE", "POST"), staff=True)
+@api(("DELETE", "POST"), perm="abuse.manage")
 def block_delete(request, block_id):
     if request.method == "POST":  # clear a lockout by key instead
         key = (parse_json(request) or {}).get("key", "")
@@ -324,7 +356,7 @@ def block_delete(request, block_id):
 SETTING_KEYS = ("registration_open", "allow_anonymous_links", "email_allow_domains", "email_deny_domains")
 
 
-@api(("GET", "POST"), staff=True)
+@api(("GET", "POST"), perm={"GET": "settings.read", "POST": "settings.write"})
 def runtime_settings(request):
     plan = Plan.default()
     if request.method == "POST":
@@ -349,7 +381,7 @@ def runtime_settings(request):
     })
 
 
-@api(("GET",), staff=True)
+@api(("GET",), perm="audit.read")
 def audit_view(request):
     qs = AuditLog.objects.select_related("user")
     ev, q = request.GET.get("event"), request.GET.get("q")
@@ -391,7 +423,7 @@ def _dir_size(path):
     return total
 
 
-@api(("GET",), staff=True)
+@api(("GET",), perm="health.read")
 def health(request):
     db = settings.DATABASES["default"]
     db_size = None
@@ -416,7 +448,7 @@ def health(request):
     })
 
 
-@api(("POST",), staff=True)
+@api(("POST",), perm="mail.manage")
 def test_email(request):
     to = str((parse_json(request) or {}).get("to") or request.user.email or "").strip()
     if not to:
@@ -431,7 +463,7 @@ def test_email(request):
     return JsonResponse({"ok": True, "backend": "smtp" if settings.SMTP_ENABLED else "console"})
 
 
-@api(("GET", "POST"), staff=True)
+@api(("GET", "POST"), perm={"GET": "trash.purge", "POST": "trash.purge"})
 def trash_admin(request):
     if request.method == "POST":
         b = parse_json(request) or {}
@@ -447,7 +479,7 @@ def trash_admin(request):
     return JsonResponse({"retentionDays": settings.TRASH_RETENTION_DAYS, "users": list(rows)})
 
 
-@api(("POST",), staff=True)
+@api(("POST",), perm="abuse.manage")
 def report_resolve(request, rid):
     r = AbuseReport.objects.filter(uid=rid).first()
     if not r:
@@ -459,7 +491,7 @@ def report_resolve(request, rid):
 
 
 # ---- mail abuse panel ----
-@api(("GET", "POST"), staff=True)
+@api(("GET", "POST"), perm="mail.manage")
 def mail_panel(request):
     from . import emails
     from .models import MailQueue, SuppressedAddress
@@ -488,7 +520,7 @@ def mail_panel(request):
     })
 
 
-@api(("DELETE",), staff=True)
+@api(("DELETE",), perm="mail.manage")
 def suppress_delete(request, sid):
     from .models import SuppressedAddress
 

@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import views_presence, views_rtc, views_trash, views_admin, views_assets, views_auth, views_share, views_sync
+from . import views_system, views_presence, views_rtc, views_trash, views_admin, views_assets, views_auth, views_share, views_sync
 
 urlpatterns = [
     path("health", views_sync.health),
@@ -36,6 +36,7 @@ urlpatterns = [
     path("sync/wait", views_sync.wait),
     path("trash", views_trash.trash_list),
     path("trash/empty", views_trash.trash_empty),
+    path("trash/delete", views_trash.trash_delete_many),
     path("trash/<str:kind>/<str:rid>/restore", views_trash.trash_restore),
     path("trash/<str:kind>/<str:rid>", views_trash.trash_purge),
     path("rtc/ice", views_rtc.ice),
@@ -68,6 +69,13 @@ urlpatterns = [
     path("admin/test-email", views_admin.test_email),
     path("admin/trash", views_admin.trash_admin),
     path("admin/mail", views_admin.mail_panel),
+    path("system/analytics", views_system.analytics),
+    path("system/api-stats", views_system.api_stats),
+    path("system/server", views_system.server),
+    path("system/roles", views_system.roles),
+    path("system/roles/<str:rid>", views_system.role_detail),
+    path("system/data", views_system.data_tables),
+    path("system/data/<str:table>", views_system.data_rows),
     path("admin/mail/suppress/<str:sid>", views_admin.suppress_delete),
     path("admin/stats", views_admin.stats),
 ]

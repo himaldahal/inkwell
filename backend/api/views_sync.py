@@ -207,6 +207,11 @@ def push(request):
             accepted.append({"kind": kind, "id": rid, "seq": seq, "updatedAt": ua})
         for oid, aid in removed_blobs:
             delete_blob_file(User(pk=oid), aid)
+    from . import metrics
+
+    metrics.bump("conflicts", len(conflicts))
+    metrics.bump("rejected", len(rejected))
+    metrics.bump("records_pushed", len(accepted))
     return JsonResponse(
         {"accepted": accepted, "conflicts": conflicts, "rejected": rejected, "cursor": enc_cursor(me, top), "serverTime": now_ms()}
     )

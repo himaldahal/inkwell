@@ -109,7 +109,7 @@ RATE_LIMIT_API = env_int("RATE_LIMIT_API", 600)         # authenticated requests
 CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS")  # '*' allowed (token auth, no cookies)
 TRUST_PROXY = env_bool("TRUST_PROXY", False)  # scheme only (X-Forwarded-Proto); client IPs use TRUSTED_PROXIES
 TRUSTED_PROXIES = env_list("TRUSTED_PROXIES")  # IPs whose X-Forwarded-For is believed; '*' = any (only behind a proxy you control)
-TRASH_RETENTION_DAYS = env_int("TRASH_RETENTION_DAYS", 30)
+TRASH_RETENTION_DAYS = env_int("TRASH_RETENTION_DAYS", 60)
 LONGPOLL = env_bool("LONGPOLL", False)
 LONGPOLL_MAX_SECONDS = env_int("LONGPOLL_MAX_SECONDS", 20)
 STUN_URLS = env_list("STUN_URLS", "stun:stun.l.google.com:19302")
@@ -147,6 +147,7 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "inkwell.middleware.CorsMiddleware",
     "inkwell.middleware.SecurityHeadersMiddleware",
+    "api.metrics.MetricsMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.middleware.gzip.GZipMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -265,7 +266,8 @@ if not DEBUG and env_bool("HTTPS_ONLY", True):
     SECURE_HSTS_SECONDS = env_int("HSTS_SECONDS", 31536000)
     SECURE_HSTS_INCLUDE_SUBDOMAINS = False
     SECURE_SSL_REDIRECT = env_bool("SSL_REDIRECT", False)  # many hosts redirect in .htaccess already
-CSP_CONNECT_SRC = env("CSP_CONNECT_SRC", "'self' https:")
+CSP_CONNECT_SRC = env("CSP_CONNECT_SRC", "'self' https:")  # https: already covers tessdata.projectnaptha.com
+EMBED_HOSTS = env_list("EMBED_HOSTS", "www.youtube-nocookie.com,player.vimeo.com,docs.google.com,www.loom.com,www.figma.com,www.google.com")  # frame-src allow-list
 TOKEN_TTL_DAYS = env_int("TOKEN_TTL_DAYS", 90)  # sliding expiry
 RATE_LIMIT_LOGIN = env_int("RATE_LIMIT_LOGIN", 8)  # failed+ok attempts per 5 min per IP+username
 
