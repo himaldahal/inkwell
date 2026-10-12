@@ -1,4 +1,4 @@
-import{a1 as $,ad as f,a4 as y,a2 as x,a9 as w}from"./index-I50kToNP.js";import{importPdfToNote as k}from"./pdf-Db2_pqZ2.js";function j(s=""){const n=new DOMParser().parseFromString(`<body>${s}</body>`,"text/html");return n.querySelectorAll("br").forEach(e=>e.replaceWith(`
+import{e as $,ap as f,aa as y,n as x,ae as w}from"./index-096hOYYv.js";import{importPdfToNote as k}from"./pdf-DQcXKjpw.js";function j(s=""){const n=new DOMParser().parseFromString(`<body>${s}</body>`,"text/html");return n.querySelectorAll("br").forEach(e=>e.replaceWith(`
 `)),n.querySelectorAll("li").forEach(e=>e.prepend("• ")),n.querySelectorAll("p,div,h1,h2,h3,h4,h5,h6,li,tr,blockquote,pre").forEach(e=>e.append(`
 `)),(n.body.textContent||"").replace(/\n{3,}/g,`
 

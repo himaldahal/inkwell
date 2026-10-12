@@ -256,6 +256,7 @@ def role_detail(request, rid):
     if r.builtin:
         return err("built-in roles are fixed", 403)
     if request.method == "DELETE":
+        User.objects.filter(profile__role=r, is_superuser=False).update(is_staff=False)  # back to a plain user
         Profile.objects.filter(role=r).update(role=None)
         audit(request, "role.delete", None, r.name)
         r.delete()
