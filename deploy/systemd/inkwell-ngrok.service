@@ -1,0 +1,12 @@
+[Unit]
+Description=Inkwell ngrok tunnel
+After=network-online.target inkwell-web.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/snap/bin/ngrok http --url=vexillate-juliette-overgenially.ngrok-free.dev 8000 --log=stdout
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

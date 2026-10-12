@@ -189,6 +189,9 @@ Backends are replaceable too:
 ## Trash
 Deleted notes and notebooks go to Trash and are removed automatically after **60 days** (`TRASH_RETENTION_DAYS`). Users can also delete permanently at any time (single item, selection or "Empty trash"), which also removes the stored files. Expired items are purged lazily by the server; `python manage.py purge_trash` can run from cron as well.
 
+### Sharing a dev instance (ngrok + systemd)
+`scripts/share-ngrok.sh <domain>` runs a quick demo with the Django dev server. For something sturdier on a Linux machine, install `gunicorn` (`pip install -r backend/requirements-server.txt`), copy the units from `deploy/systemd/` to `~/.config/systemd/user/` (edit the paths and your ngrok domain), then `systemctl --user enable --now inkwell-web inkwell-ngrok` (and `loginctl enable-linger $USER` to survive logout). The web unit pre-compresses the built assets at start-up (`python -m whitenoise.compress`), and gunicorn serves both the API and the frontend through the single tunnel.
+
 ## Security
 - E-mail-only login; Django password hashing and validators; optional TOTP 2FA with recovery codes; hashed, expiring, rotating API tokens; device list with revoke.
 - No ID enumeration: every query is scoped to the signed-in user, unauthorised and missing resources look identical, record ids are namespaced per owner, share tokens are random and stored hashed, responses to sign-in/reset/invites do not reveal whether an account exists.

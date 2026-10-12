@@ -9,3 +9,9 @@ __pycache__
 backend/db.sqlite3
 backend/.env
 backend/media
+
+# precompressed copies are generated at deploy/start time
+backend/inkwell/static_app/**/*.gz
+backend/inkwell/static_app/**/*.br
+backend/inkwell/static_app/*.gz
+backend/inkwell/static_app/*.br

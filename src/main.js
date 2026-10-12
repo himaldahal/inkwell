@@ -241,10 +241,16 @@ async function boot() {
   });
 }
 
-const firstSync = (ms = 8000) => new Promise((res) => { const off = on('sync:status', (st) => { if (st && st.state === 'idle' && st.lastSync) { off(); res(); } }); setTimeout(() => { off(); res(); }, ms); });
-async function onboard() {
+const firstSync = async () => {   // resolves after the first successful sync of this session (no timeout: a slow pull must not lead to a duplicate welcome note)
+  try { const m = await import('./core/sync.js'); if (m.getSyncState?.().lastSync) return; } catch { /* sync unavailable */ }
+  return new Promise((res) => { const off = on('sync:status', (st) => { if (st && st.state === 'idle' && st.lastSync) { off(); res(); } }); });
+};
+let onboarding = null;
+const onboard = () => (onboarding ||= onboardOnce().finally(() => { onboarding = null; }));
+async function onboardOnce() {
   if (await getMeta('onboarded', false)) return;
   if (navigator.onLine) await firstSync();   // an existing account may already have notes on the server; don't add a duplicate welcome note
+  if (await getMeta('onboarded', false)) return;
   const existing = await getAll('notes');
   await setMeta('onboarded', true);
   if (existing.length) return;
