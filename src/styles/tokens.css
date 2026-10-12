@@ -1,0 +1,45 @@
+/* Inkwell design tokens (imported after main.css so these win).
+   Public token list, used by every screen (library, editor, auth, admin, share):
+     --bg  --surface  --surface-2  --surface-3   backgrounds, low to high
+     --text  --muted  --faint                    text
+     --border                                    hairlines
+     --accent  --accent-strong  --accent-soft  --on-accent
+     --danger  --success (alias --ok)
+     --canvas  --page                            editor backdrop and paper
+     --shadow-1/2/3  --radius  --radius-sm
+   Themes: data-theme = system | light | dark | sepia on <html>. */
+:root {
+  color-scheme: light;
+  --bg: #F2F2F7; --surface: #FFFFFF; --surface-2: #E9E9EE; --surface-3: #DCDCE2;
+  --border: rgba(0, 0, 0, .08); --text: #1C1C1E; --muted: #8E8E93; --faint: #AEAEB2;
+  --accent: #FF9F0A; --accent-strong: color-mix(in srgb, var(--accent) 82%, #000); --on-accent: #fff;
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --danger: #FF3B30; --success: #34C759; --ok: #248A3D; --warn: #C77700;
+  --canvas: #E5E8EE; --page: #FFFFFF; --glass: color-mix(in srgb, var(--surface) 74%, transparent);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .06); --shadow-2: 0 8px 24px rgba(0, 0, 0, .10), 0 2px 6px rgba(0, 0, 0, .06); --shadow-3: 0 24px 60px rgba(0, 0, 0, .22);
+}
+:root[data-theme="sepia"] { --bg: #F1E7D0; --surface: #FBF4E2; --surface-2: #E9DDC0; --surface-3: #DFD0AB; --border: rgba(74, 58, 36, .14); --text: #4A3A24; --muted: #8A7650; --faint: #A99A78; --canvas: #E2D5B5; --page: #FFFBEF; }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #000000; --surface: #1C1C1E; --surface-2: #2C2C2E; --surface-3: #3A3A3C;
+  --border: rgba(255, 255, 255, .10); --text: #F2F2F7; --muted: #98989F; --faint: #6C6C70;
+  --danger: #FF453A; --success: #30D158; --ok: #30D158; --warn: #FFB340;
+  --canvas: #232326; --page: #FFFFFF; --glass: color-mix(in srgb, var(--surface-2) 78%, transparent);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, .5); --shadow-2: 0 8px 24px rgba(0, 0, 0, .55); --shadow-3: 0 24px 60px rgba(0, 0, 0, .7);
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] {
+    color-scheme: dark;
+    --bg: #000000; --surface: #1C1C1E; --surface-2: #2C2C2E; --surface-3: #3A3A3C;
+    --border: rgba(255, 255, 255, .10); --text: #F2F2F7; --muted: #98989F; --faint: #6C6C70;
+    --danger: #FF453A; --success: #30D158; --ok: #30D158; --warn: #FFB340;
+    --canvas: #232326; --page: #FFFFFF; --glass: color-mix(in srgb, var(--surface-2) 78%, transparent);
+    --shadow-1: 0 1px 2px rgba(0, 0, 0, .5); --shadow-2: 0 8px 24px rgba(0, 0, 0, .55); --shadow-3: 0 24px 60px rgba(0, 0, 0, .7);
+  }
+}
+:root[data-theme="dark"] .toast, :root[data-theme="system"] .toast { background: color-mix(in srgb, var(--surface-3) 90%, transparent); }
+* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--muted) 45%, transparent) transparent; }
+input, select, textarea { color-scheme: inherit; }
+input[type="range"], input[type="checkbox"] { accent-color: var(--accent); }
+::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+a:not([class]) { color: var(--accent); }

@@ -45,7 +45,6 @@ export function mountSettings(container) {
       card('Appearance',
         row('Theme', null, seg([['system', 'System'], ['light', 'Light'], ['dark', 'Dark'], ['sepia', 'Sepia']], st.theme, (k) => set({ theme: k }), 'Theme')),
         row('Accent color', null, h('div', { class: 'swatches' }, ACCENTS.map((c) => h('button', { type: 'button', class: 'swatch' + (st.accent === c ? ' sel' : ''), style: { background: c }, 'aria-label': 'Accent ' + c, 'aria-pressed': String(st.accent === c), onclick: () => set({ accent: c }) }, st.accent === c ? icon('check', 14) : null)), accentCustom)),
-        row('Paper tone', 'Background warmth', seg([['warm', 'Warm'], ['neutral', 'Neutral'], ['cool', 'Cool']], st.paperTone, (k) => set({ paperTone: k }), 'Paper tone')),
         row('Text size', null, seg([['small', 'Small'], ['medium', 'Medium'], ['large', 'Large']], st.fontSize, (k) => set({ fontSize: k }), 'Text size')),
         row('Reduce motion', 'Turn off animations', h('label', { class: 'switch' }, h('input', { type: 'checkbox', checked: st.reducedMotion, onchange: (e) => set({ reducedMotion: e.target.checked }) }), h('span', {}))),
         row('High contrast', 'Stronger borders and text', h('label', { class: 'switch' }, h('input', { type: 'checkbox', checked: st.highContrast, onchange: (e) => set({ highContrast: e.target.checked }) }), h('span', {})))),

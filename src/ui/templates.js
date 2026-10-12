@@ -25,7 +25,7 @@ export const PAPER_COLORS = [
 ];
 export const NB_COLORS = ['#4f46e5', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#8b5cf6', '#64748b'];
 export const NB_ICONS = ['📓', '📚', '🎓', '💼', '🧪', '🎨', '🏠', '💡', '✈️', '🎵', '💻', '⭐'];
-export const ACCENTS = ['#4f46e5', '#2563eb', '#0891b2', '#059669', '#d97706', '#dc2626', '#db2777', '#7c3aed'];
+export const ACCENTS = ['#FF9F0A', '#FF453A', '#FF375F', '#30B454', '#0A84FF', '#5E5CE6', '#BF5AF2', '#4f46e5', '#64748b'];
 export const SMART = [
   { id: 'week', label: 'This week', icon: 'calendar', test: (n) => n.updatedAt > Date.now() - 7 * 864e5 },
   { id: 'untagged', label: 'Untagged', icon: 'tag', test: (n) => !(n.tags || []).length },

@@ -3,7 +3,7 @@ import { emit } from './store.js';
 
 export const DEFAULTS = {
   theme: 'system',          // system | light | dark | sepia
-  accent: '#4f46e5',
+  accent: '#FF9F0A',
   paperTone: 'warm',        // warm | neutral | cool
   fontSize: 'medium',       // small | medium | large
   reducedMotion: false,
@@ -37,7 +37,7 @@ export function applySettings(s = cur) {
   r.setAttribute('data-contrast', s.highContrast ? 'high' : 'normal');
   r.setAttribute('data-motion', s.reducedMotion ? 'reduce' : 'auto');
   r.style.setProperty('--accent', s.accent);
-  r.style.setProperty('--on-accent', lum(s.accent) > 0.4 ? '#14121f' : '#ffffff');
+  r.style.setProperty('--on-accent', lum(s.accent) > 0.62 ? '#14121f' : '#ffffff');
   r.style.fontSize = { small: '15px', medium: '16px', large: '18px' }[s.fontSize] || '16px';
   try { localStorage.setItem('inkwell:boot', JSON.stringify({ theme: s.theme, accent: s.accent })); } catch { /* ignore */ }
   requestAnimationFrame(() => {

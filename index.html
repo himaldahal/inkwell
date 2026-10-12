@@ -3,18 +3,22 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#f6f3ee" />
+  <meta name="theme-color" content="#F2F2F7" />
   <meta name="description" content="Inkwell - offline-first handwriting and note-taking" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Inkwell" />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%234f46e5'/%3E%3Cpath d='M9 23l2-7 9-9 3 3-9 9z' fill='%23fff'/%3E%3C/svg%3E" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23FF9F0A'/%3E%3Cpath d='M9 23l2-7 9-9 3 3-9 9z' fill='%23fff'/%3E%3C/svg%3E" />
   <title>Inkwell</title>
   <script>
     // set theme before first paint to avoid a flash
     try {
       var s = JSON.parse(localStorage.getItem('inkwell:boot') || '{}');
-      if (s.theme) document.documentElement.setAttribute('data-theme', s.theme);
+      var t = s.theme || 'system', r = document.documentElement;
+      r.setAttribute('data-theme', t);
+      var dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+      var m = document.querySelector('meta[name="theme-color"]');
+      if (m) m.content = dark ? '#000000' : t === 'sepia' ? '#F1E7D0' : '#F2F2F7';
       if (s.accent) document.documentElement.style.setProperty('--accent', s.accent);
     } catch (e) {}
   </script>

@@ -1,4 +1,5 @@
 import './styles/main.css';
+import './styles/tokens.css';
 import { h, icon, initToasts, isNarrow, openModal, promptDialog } from './ui/dom.js';
 import { on, emit, toast } from './core/store.js';
 import { startRouter, navigate, current } from './core/router.js';

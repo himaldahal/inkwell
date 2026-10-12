@@ -17,15 +17,6 @@
   --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
   color-scheme: light;
 }
-:root[data-paper="neutral"] { --bg: #f4f4f5; --surface: #fff; --surface-2: #ececee; --surface-3: #e2e2e5; --border: #dcdce0; }
-:root[data-paper="cool"] { --bg: #eef1f6; --surface: #fbfcfe; --surface-2: #e6eaf1; --surface-3: #dce1ea; --border: #d5dbe6; }
-:root[data-theme="sepia"] { --bg: #efe3c8; --surface: #f8efd9; --surface-2: #e8dbbd; --surface-3: #dfd0ae; --border: #d8c9a5; --text: #4a3a24; --muted: #7a6748; --faint: #a08c68; }
-@media (prefers-color-scheme: dark) { :root[data-theme="system"] { --dk: 1; } }
-:root[data-theme="dark"], :root[data-theme="system"][data-dk] { }
-:root[data-theme="dark"] { color-scheme: dark; --bg: #121118; --surface: #1c1b24; --surface-2: #25242f; --surface-3: #302f3c; --border: #2f2e3b; --text: #ececf3; --muted: #a29fb0; --faint: #77748a; --shadow-1: 0 1px 2px rgba(0,0,0,.4); --shadow-2: 0 8px 24px rgba(0,0,0,.5); --shadow-3: 0 24px 60px rgba(0,0,0,.6); --danger: #f2686c; --ok: #4ade80; }
-@media (prefers-color-scheme: dark) {
-  :root[data-theme="system"] { color-scheme: dark; --bg: #121118; --surface: #1c1b24; --surface-2: #25242f; --surface-3: #302f3c; --border: #2f2e3b; --text: #ececf3; --muted: #a29fb0; --faint: #77748a; --shadow-1: 0 1px 2px rgba(0,0,0,.4); --shadow-2: 0 8px 24px rgba(0,0,0,.5); --shadow-3: 0 24px 60px rgba(0,0,0,.6); --danger: #f2686c; --ok: #4ade80; }
-}
 :root[data-contrast="high"] { --border: color-mix(in srgb, var(--text) 45%, transparent); --muted: color-mix(in srgb, var(--text) 82%, var(--bg)); }
 :root[data-contrast="high"] .card, :root[data-contrast="high"] .btn { border-width: 2px; }
 
@@ -442,9 +433,6 @@ body { font-feature-settings: "cv11", "ss01"; letter-spacing: -.006em; }
 .ptr.pulling { transition: none; } .ptr .ic { margin-bottom: 8px; transform: rotate(calc(var(--pull, 0px) * 4deg)); } .ptr.ready { color: var(--accent); } .ptr.spin .ic { animation: spin .8s linear infinite; }
 
 /* ---------- library visual refresh: airy, layered ---------- */
-:root { --bg: #f7f6f3; --surface: #ffffff; --surface-2: #f0efeb; --surface-3: #e6e4de; --border: #e8e5de; }
-:root[data-paper="neutral"] { --bg: #f6f6f7; --surface-2: #eeeef0; }
-:root[data-paper="cool"] { --bg: #f1f4f9; --surface-2: #e9edf4; }
 .card .thumb { border-radius: 16px; border-color: transparent; }
 .card-title { font-size: .95rem; } .card-meta { font-size: .78rem; }
 .sb-title { margin-top: 4px; }
