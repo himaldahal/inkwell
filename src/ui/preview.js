@@ -1,5 +1,5 @@
 import { h, icon, openMenu, emptyState, plural } from './dom.js';
-import { fmtDate } from '../core/utils.js';
+import { fmtDate } from './fmt.js';
 import * as A from './actions.js';
 import { getAll } from '../core/db.js';
 import { noteHref } from '../core/router.js';

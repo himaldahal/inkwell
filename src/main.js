@@ -13,6 +13,7 @@ import { newNoteDialog, notebookDialog, quickNote, shortcutsDialog } from './ui/
 import { initInstallPrompt, canInstall, promptInstall } from './ui/install.js';
 import { initAppLock } from './ui/lock.js';
 import * as A from './ui/actions.js';
+import { SHORTCUT_DEFAULTS, comboOf } from './ui/settingsSchema.js';
 import { loadUi, loadConfig, loadAccount } from './ui/config.js';
 
 const LIB_ROUTES = new Set(['shared', 'all', 'favorites', 'recent', 'archive', 'trash', 'notebook', 'tag', 'smart', 'search']);
@@ -134,17 +135,21 @@ async function boot() {
     if (isNarrow()) return navigate(current().name === 'browse' ? '/' : '/browse');
     updateSettings({ sidebarCollapsed: !getSettings().sidebarCollapsed }).then(sidebar.applyCollapsed);
   }
+  const combo0 = comboOf;
   const typing = (t) => t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName));
   document.addEventListener('keydown', (e) => {
     const mod = e.ctrlKey || e.metaKey; const k = e.key.toLowerCase();
-    if (document.querySelector('.backdrop, .menu-backdrop') && !(mod && k === 'k')) return;
+    if (document.querySelector('.backdrop, .menu-backdrop') && combo0(e) !== (({ ...SHORTCUT_DEFAULTS, ...(getSettings().shortcuts || {}) }).palette)) return;
     const inNote = current().name === 'note';
-    if (mod && k === 'k') { e.preventDefault(); if (document.querySelector('.pal-in')) return; openPalette(); return; }
+    const combo = comboOf(e), sc = { ...SHORTCUT_DEFAULTS, ...(getSettings().shortcuts || {}) };
+    const is = (id) => combo === sc[id];
+    if (is('palette')) { e.preventDefault(); if (document.querySelector('.pal-in')) return; openPalette(); return; }
     if (inNote) return;
-    if (mod && k === 'n') { e.preventDefault(); e.shiftKey ? notebookDialog() : newNoteDialog({ notebookId: current().name === 'notebook' ? current().params.id : null }); }
-    else if (mod && k === 'd') { e.preventDefault(); daily(); }
-    else if (mod && k === '\\') { e.preventDefault(); toggleSidebar(); }
-    else if (mod && e.shiftKey && k === 'f') { e.preventDefault(); zen(); }
+    if (is('new')) { e.preventDefault(); newNoteDialog({ notebookId: current().name === 'notebook' ? current().params.id : null }); }
+    else if (is('notebook')) { e.preventDefault(); notebookDialog(); }
+    else if (is('daily')) { e.preventDefault(); daily(); }
+    else if (is('sidebar')) { e.preventDefault(); toggleSidebar(); }
+    else if (is('zen')) { e.preventDefault(); zen(); }
     else if (typing(e.target)) return;
     else if (e.key === '/' && !mod) { e.preventDefault(); if (!LIB_ROUTES.has(current().name)) navigate('/'); library.focusSearch(); }
     else if (e.key === '?') { e.preventDefault(); shortcutsDialog(); }
@@ -174,9 +179,22 @@ async function boot() {
     } catch (err) { console.error(err); toast('Import failed', { type: 'error' }); }
   });
 
+  // ----- native feel -----
+  document.addEventListener('contextmenu', (e) => { if (!e.target.closest('input, textarea, [contenteditable], .selectable, .card, .nav-item.nb')) e.preventDefault(); });
+  document.addEventListener('pointerdown', (e) => { if (e.pointerType !== 'mouse' && e.target.closest('.tab, .fab, .btn.primary, .icon-btn, .selbtn')) navigator.vibrate?.(6); }, { passive: true });
+  let sw = null;   // edge swipe back
+  document.addEventListener('touchstart', (e) => { const t = e.touches[0]; sw = e.touches.length === 1 && t.clientX < 24 ? { x: t.clientX, y: t.clientY } : null; }, { passive: true });
+  document.addEventListener('touchend', (e) => {
+    if (!sw) return; const t = e.changedTouches[0]; const dx = t.clientX - sw.x, dy = Math.abs(t.clientY - sw.y); sw = null;
+    if (dx > 90 && dy < 60 && current().name !== 'all' && !document.querySelector('.backdrop')) { navigator.vibrate?.(8); if (current().name === 'note') import('./core/router.js').then((m) => m.back('/')); else history.length > 1 ? history.back() : navigate('/'); }
+  }, { passive: true });
+  on('install:available', (ok) => { try { if (ok && !localStorage.getItem('inkwell:installNudge')) { localStorage.setItem('inkwell:installNudge', '1'); toast('Install Inkwell for a full-screen, offline app', { duration: 12000, action: { label: 'Install', onClick: promptInstall } }); } } catch { /* ignore */ } });
+
   // ----- start -----
+  try { const l = localStorage.getItem('inkwell:last'); if ((!location.hash || location.hash === '#/') && l && /^#\/(note|notebook|tag|smart|favorites|recent|settings)/.test(l)) history.replaceState(null, '', l); } catch { /* ignore */ }
   loadConfig(); loadAccount();
   startRouter();
+  setTimeout(() => { const sp = document.getElementById('splash'); sp?.classList.add('out'); setTimeout(() => sp?.remove(), 400); }, 450);
   initAppLock();
   A.purgeOldTrash().catch(() => {});
   onboard().catch(() => {});

@@ -14,7 +14,7 @@ export async function createNote(opts = {}) {
   const tpl = opts.template || preset?.base || s.defaultTemplate || 'lined';
   const text = opts.text ?? preset?.text ?? '';
   const note = blankNote({
-    title: opts.title ?? preset?.title ?? '', notebookId: opts.notebookId ?? null, template: tpl,
+    title: opts.title ?? preset?.title ?? '', notebookId: opts.notebookId ?? s.defaultNotebook ?? null, template: tpl,
     paperColor: opts.paperColor === undefined ? s.defaultPaper : opts.paperColor,
     text, textIndex: stripHtml(text), tags: opts.tags || [],
   });
@@ -43,6 +43,7 @@ export async function toggleFlag(notes, key) {
 }
 export async function trashNotes(notes, { undo = true } = {}) {
   const ids = idsOf(notes);
+  if (getSettings().confirmDelete) { const { confirmDialog } = await import('./dom.js'); if (!(await confirmDialog({ title: 'Move to trash?', message: `${ids.length} note(s) will go to Trash.`, confirmLabel: 'Move to trash', danger: true }))) return; }
   await patchNotes(ids, (n) => { n.trashedAt = Date.now(); });
   toast(ids.length === 1 ? 'Moved to trash' : `${ids.length} notes moved to trash`, undo ? { action: { label: 'Undo', onClick: () => restoreNotes(ids, { silentToast: true }) } } : {});
 }

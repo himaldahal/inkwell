@@ -1,6 +1,7 @@
 import { getMeta, setMeta, putRecord } from '../core/db.js';
 import { emit, on, toast } from '../core/store.js';
 import { h, openModal, icon } from './dom.js';
+import { getSettings } from '../core/settings.js';
 
 /* Passcode gate. A key is derived with PBKDF2 and used to AES-GCM encrypt a known
    token; checking a passcode means decrypting that token. This gates access in the UI
@@ -100,8 +101,10 @@ export async function initAppLock() {
   let t;
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
-      t = setTimeout(() => { relockAll(); emit('lock:relock'); if (appLockObj) showAppLock(); }, 10000);
-    } else clearTimeout(t);
+      const secs = getSettings().autoLockSecs ?? 10;
+      if (getSettings().hidePreviews) document.documentElement.classList.add('privacy-blur');
+      if (secs >= 0) t = setTimeout(() => { relockAll(); emit('lock:relock'); if (appLockObj) showAppLock(); }, secs * 1000);
+    } else { clearTimeout(t); document.documentElement.classList.remove('privacy-blur'); }
   });
 }
 export const appLockEnabled = () => !!appLockObj;

@@ -1,149 +1,147 @@
-// Sync & account settings panel. mountSyncSettings(el) -> { destroy() }
+// Account & sync settings panel. mountSyncSettings(el) -> { destroy() }
 import { h } from '../core/utils.js';
 import { on, toast } from '../core/store.js';
 import * as sync from '../core/sync.js';
+import { ensureCss, field, bytes, ago, errText, avatarEl } from './sxkit.js';
 
-const CSS = `
-.ss{display:grid;gap:16px;max-width:560px;color:var(--text,#1f1d2b);font:inherit}
-.ss *{box-sizing:border-box}
-.ss-card{background:var(--surface,#fff);border:1px solid var(--border,#e4e0d8);border-radius:14px;padding:16px;display:grid;gap:12px}
-.ss h3{margin:0;font-size:1rem}.ss p{margin:0;color:var(--muted,#6b6880);font-size:.875rem;line-height:1.45}
-.ss label{display:grid;gap:4px;font-size:.8rem;color:var(--muted,#6b6880)}
-.ss input[type=text],.ss input[type=password],.ss input[type=email],.ss input[type=url]{width:100%;padding:10px 12px;border-radius:10px;border:1px solid var(--border,#e4e0d8);background:var(--bg,#f6f3ee);color:var(--text,#1f1d2b);font:inherit;min-height:44px}
-.ss input:focus-visible,.ss button:focus-visible{outline:2px solid var(--accent,#4f46e5);outline-offset:2px}
-.ss-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.ss-btn{min-height:44px;padding:0 16px;border-radius:10px;border:1px solid var(--border,#e4e0d8);background:var(--surface,#fff);color:var(--text,#1f1d2b);font:inherit;cursor:pointer}
-.ss-btn.primary{background:var(--accent,#4f46e5);border-color:var(--accent,#4f46e5);color:#fff}
-.ss-btn.danger{color:#c0392b;border-color:currentColor}
-.ss-btn[disabled]{opacity:.55;cursor:default}
-.ss-tabs{display:flex;gap:4px;background:var(--bg,#f6f3ee);border-radius:10px;padding:3px}
-.ss-tabs button{flex:1;min-height:38px;border:0;border-radius:8px;background:none;color:var(--muted,#6b6880);font:inherit;cursor:pointer}
-.ss-tabs button[aria-selected=true]{background:var(--surface,#fff);color:var(--text,#1f1d2b);box-shadow:0 1px 3px rgba(0,0,0,.12)}
-.ss-stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
-.ss-stat{background:var(--bg,#f6f3ee);border-radius:10px;padding:10px 12px}.ss-stat b{display:block;font-size:1.05rem}.ss-stat span{font-size:.75rem;color:var(--muted,#6b6880)}
-.ss-badge{display:inline-flex;align-items:center;gap:6px;font-size:.8rem;padding:3px 10px;border-radius:99px;background:var(--bg,#f6f3ee)}
-.ss-badge i{width:8px;height:8px;border-radius:50%;background:#2e9e5b}.ss-badge.syncing i{background:var(--accent,#4f46e5)}.ss-badge.offline i{background:#999}.ss-badge.error i{background:#c0392b}
-.ss-err{color:#c0392b;font-size:.85rem}
-.ss-warn{background:rgba(224,160,40,.14);border:1px solid rgba(224,160,40,.5);border-radius:10px;padding:10px 12px;font-size:.82rem}
-.ss-dev{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:8px 0;border-top:1px solid var(--border,#e4e0d8)}
-.ss-dev:first-child{border-top:0}.ss-dev small{display:block;color:var(--muted,#6b6880)}
-.ss details summary{cursor:pointer;color:var(--muted,#6b6880);font-size:.85rem;min-height:32px}
-`;
+const STATE = { idle: 'Up to date', syncing: 'Syncing', offline: 'Offline', error: 'Needs attention' };
+const go = (p) => { location.hash = '#' + p; };
 
-const bytes = (n) => (n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : n < 1073741824 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1073741824).toFixed(2) + ' GB');
-const ago = (ts) => {
-  if (!ts) return 'never';
-  const s = Math.round((Date.now() - ts) / 1000);
-  return s < 10 ? 'just now' : s < 60 ? s + 's ago' : s < 3600 ? Math.round(s / 60) + ' min ago' : s < 86400 ? Math.round(s / 3600) + ' h ago' : new Date(ts).toLocaleDateString();
-};
-const STATE_LABEL = { idle: 'Up to date', syncing: 'Syncing', offline: 'Offline', error: 'Error' };
+/** Downscale to a 256px square JPEG (<=200KB) before upload */
+async function shrink(file) {
+  const bmp = await createImageBitmap(file);
+  const s = Math.min(bmp.width, bmp.height), c = document.createElement('canvas');
+  c.width = c.height = 256;
+  c.getContext('2d').drawImage(bmp, (bmp.width - s) / 2, (bmp.height - s) / 2, s, s, 0, 0, 256, 256);
+  for (const q of [0.9, 0.75, 0.6, 0.45]) {
+    const b = await new Promise((r) => c.toBlob(r, 'image/jpeg', q));
+    if (b && b.size <= 190000) return b;
+  }
+  throw new Error('Image is too detailed; choose another one.');
+}
 
 export function mountSyncSettings(el) {
-  if (!document.getElementById('ss-style')) document.head.append(h('style', { id: 'ss-style' }, CSS));
-  const root = h('div', { class: 'ss' });
+  ensureCss();
+  const root = h('div', { class: 'sx', style: { maxWidth: '620px' } });
   el.append(root);
-  let mode = 'signin', busy = false, msg = '', auth = null, info = null, devices = null, e2e = false, alive = true;
+  let busy = false, msg = '', auth = null, info = null, devices = null, e2e = false, alive = true, twofa = null, codes = null;
 
-  const run = async (fn, ok) => {
+  const run = async (fn, okMsg) => {
     busy = true; msg = ''; paint();
-    try { await fn(); if (ok) toast(ok); } catch (e) { msg = e?.message || String(e); if (e?.name === 'TypeError') msg = 'Cannot reach the server. Check the address and your connection.'; }
-    busy = false;
-    await load();
+    try { await fn(); if (okMsg) toast(okMsg); } catch (e) { msg = errText(e); }
+    busy = false; await load();
   };
-
   async function load() {
     auth = await sync.getAuth(); e2e = await sync.isE2EEnabled();
     if (auth?.token && navigator.onLine) {
       try { info = await sync.getAccountInfo(); devices = await sync.listDevices(); } catch (e) { if (e.status === 401) info = null; }
     } else { info = null; devices = null; }
-    if (alive) paint();
+    paint();
   }
-
-  function field(label, attrs) {
-    const input = h('input', attrs);
-    return [h('label', {}, label, input), input];
-  }
+  const stat = (l, v) => h('div', { class: 'sx-stat' }, h('b', {}, v), h('span', {}, l));
 
   function signedOut() {
     const s = sync.getSyncState();
-    const [l1, user] = field('Username', { type: 'text', autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false' });
-    const [l2, pass] = field('Password', { type: 'password', autocomplete: mode === 'register' ? 'new-password' : 'current-password' });
-    const [l3, email] = field('Email (optional)', { type: 'email', autocomplete: 'email' });
-    const [l4, server] = field('Server address (blank = this site)', { type: 'url', placeholder: 'https://notes.example.com', value: auth?.serverUrl || '' });
-    const submit = () => run(async () => {
-      await sync.signIn({ serverUrl: server.value.trim(), username: user.value.trim(), password: pass.value, email: email.value.trim(), register: mode === 'register' });
-    }, 'Signed in. Syncing...');
-    const form = h('form', { class: 'ss-card', onsubmit: (e) => { e.preventDefault(); if (!busy) submit(); } },
-      h('h3', {}, 'Cloud sync'),
-      h('p', {}, 'Inkwell works fully offline. Sign in to keep your notes in sync across devices. You can keep using the app without an account.'),
-      h('div', { class: 'ss-tabs', role: 'tablist' },
-        ['signin', 'register'].map((m) => h('button', { type: 'button', role: 'tab', 'aria-selected': mode === m, onclick: () => { mode = m; msg = ''; paint(); } }, m === 'signin' ? 'Sign in' : 'Create account'))),
-      l1, l2, mode === 'register' ? l3 : null,
-      h('details', {}, h('summary', {}, 'Advanced'), l4,
-        h('button', { type: 'button', class: 'ss-btn', style: { marginTop: '8px' }, onclick: () => run(async () => { const r = await sync.checkServer(server.value.trim()); toast(r.ok ? 'Server reachable' + (r.registration ? '' : ' (registration closed)') : 'Server unhealthy'); }) }, 'Test connection')),
-      msg ? h('div', { class: 'ss-err', role: 'alert' }, msg) : null,
-      h('div', { class: 'ss-row' }, h('button', { class: 'ss-btn primary', type: 'submit', disabled: busy }, busy ? 'Please wait...' : mode === 'register' ? 'Create account' : 'Sign in')),
+    return h('div', { class: 'sx-card' }, h('h3', {}, 'Cloud sync'),
+      h('p', {}, 'Inkwell works fully offline. Sign in to keep your notes in sync across devices and to share them.'),
+      h('div', { class: 'sx-row' }, h('button', { class: 'sx-btn primary', onclick: () => go('/auth/login') }, 'Sign in'),
+        h('button', { class: 'sx-btn', onclick: () => go('/auth/register') }, 'Create account')),
       h('p', {}, `${s.pending || 0} change(s) saved on this device.`));
-    return form;
   }
 
-  function signedIn() {
-    const s = sync.getSyncState();
-    const usage = info?.usage;
-    const stats = h('div', { class: 'ss-stats' },
-      stat('Last synced', ago(s.lastSync)), stat('Waiting to upload', String(s.pending || 0)),
-      stat('Cloud storage', usage ? bytes(usage.assetBytes) + (usage.quotaBytes ? ' / ' + bytes(usage.quotaBytes) : '') : '-'),
-      stat('Notes in cloud', usage ? String(usage.records) : '-'));
-    const status = h('span', { class: 'ss-badge ' + s.state }, h('i'), STATE_LABEL[s.state] || s.state);
+  function profile() {
+    const u = info?.user || auth.user || {};
+    const [l1, name] = field('Display name (shown to people you share with)', { type: 'text', maxlength: 60, value: u.displayName || '' });
+    const file = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp', hidden: true, onchange: async (e) => {
+      const f = e.target.files[0]; if (f) run(async () => { await sync.uploadAvatar(await shrink(f)); }, 'Photo updated'); } });
+    return h('div', { class: 'sx-card' },
+      h('div', { class: 'sx-row' }, avatarEl(u, 56), h('div', { class: 'sx-grow' }, h('h3', {}, u.name || u.email), h('p', {}, u.email + ' (changed by an administrator only)'))),
+      h('div', { class: 'sx-row' }, file, h('button', { class: 'sx-btn sm', onclick: () => file.click() }, 'Change photo'),
+        u.avatar ? h('button', { class: 'sx-btn sm', onclick: () => run(() => sync.updateProfile({ removeAvatar: true }), 'Photo removed') }, 'Remove') : null),
+      l1, h('div', { class: 'sx-row' }, h('button', { class: 'sx-btn', disabled: busy, onclick: () => run(() => sync.updateProfile({ displayName: name.value }), 'Saved') }, 'Save name'),
+        u.isStaff ? h('button', { class: 'sx-btn', onclick: () => go('/admin') }, 'Open admin dashboard') : null));
+  }
 
-    const card = h('div', { class: 'ss-card' },
-      h('div', { class: 'ss-row', style: { justifyContent: 'space-between' } },
-        h('div', {}, h('h3', {}, auth.username), h('p', {}, auth.serverUrl || 'This site')), status),
-      stats,
-      s.error ? h('div', { class: 'ss-err', role: 'alert' }, s.error) : null,
-      msg ? h('div', { class: 'ss-err', role: 'alert' }, msg) : null,
-      h('div', { class: 'ss-row' },
-        h('button', { class: 'ss-btn primary', disabled: busy || s.state === 'syncing', onclick: () => run(() => sync.syncNow()) }, s.state === 'syncing' ? 'Syncing...' : 'Sync now'),
-        h('button', { class: 'ss-btn', disabled: busy, onclick: () => { if (confirm('Sign out? Notes stay on this device; unsynced changes will upload when you sign in again.')) run(() => sync.signOut(), 'Signed out'); } }, 'Sign out')));
+  function status() {
+    const s = sync.getSyncState(), q = sync.getQueue(), usage = info?.usage;
+    return h('div', { class: 'sx-card' },
+      h('div', { class: 'sx-row', style: { justifyContent: 'space-between' } }, h('h3', {}, 'Sync'), h('span', { class: 'sx-badge ' + (s.state === 'error' ? 'bad' : s.state === 'idle' ? 'ok' : '') }, STATE[s.state] || s.state)),
+      h('div', { class: 'sx-stats' }, stat('Last synced', s.lastSync ? ago(s.lastSync) : 'never'), stat('Waiting to upload', String(s.pending || 0)),
+        stat('Cloud storage', usage ? bytes(usage.assetBytes) + (usage.quotaBytes ? ' / ' + bytes(usage.quotaBytes) : '') : '-'),
+        stat('Notes', usage ? usage.notes + (usage.noteLimit ? ' / ' + usage.noteLimit : '') : '-')),
+      ...q.transfers.map((t) => h('div', { class: 'sx-row' }, h('span', { class: 'sx-grow' }, `${t.dir === 'up' ? 'Uploading' : 'Downloading'} ${t.total ? Math.round(100 * t.loaded / t.total) + '%' : ''}`),
+        h('button', { class: 'sx-btn sm', onclick: () => sync.cancelTransfer(t.id) }, 'Cancel'))),
+      s.error ? h('div', { class: 'sx-err', role: 'alert' }, s.error) : null,
+      ...q.failed.map((f) => h('div', { class: 'sx-err' }, `${f.key.split(':')[0]}: ${f.error}`)),
+      msg ? h('div', { class: 'sx-err', role: 'alert' }, msg) : null,
+      h('div', { class: 'sx-row' },
+        h('button', { class: 'sx-btn primary', disabled: busy || s.state === 'syncing', onclick: () => run(() => (q.failed.length ? sync.retryFailed() : sync.syncNow())) }, s.state === 'syncing' ? 'Syncing...' : q.failed.length ? 'Retry failed' : 'Sync now'),
+        h('button', { class: 'sx-btn', disabled: busy, onclick: () => { if (confirm('Sign out? Notes stay on this device.')) run(() => sync.signOut(), 'Signed out'); } }, 'Sign out')));
+  }
 
-    const devCard = h('div', { class: 'ss-card' }, h('h3', {}, 'Your devices'),
-      devices ? h('div', {}, devices.map((d) => h('div', { class: 'ss-dev' },
-        h('div', {}, h('b', {}, d.name || 'Device', d.current ? ' (this device)' : ''), h('small', {}, 'Last active ' + new Date(d.lastSeen).toLocaleString())),
-        d.current ? null : h('button', { class: 'ss-btn danger', disabled: busy, onclick: () => { if (confirm(`Sign out "${d.name || 'device'}"? It will need to sign in again.`)) run(() => sync.revokeDevice(d.id), 'Device removed'); } }, 'Remove')))) : h('p', {}, navigator.onLine ? 'Loading...' : 'Connect to the internet to see devices.'));
+  function devicesCard() {
+    return h('div', { class: 'sx-card' }, h('h3', {}, 'Your devices'),
+      devices ? h('div', { class: 'sx-list' }, devices.map((d) => h('div', {},
+        h('div', {}, h('b', {}, d.name || 'Device', d.current ? ' (this device)' : ''), h('small', {}, `${[d.browser, d.os].filter(Boolean).join(' on ')} - active ${ago(d.lastSeen)}`)),
+        d.current ? null : h('button', { class: 'sx-btn sm danger', disabled: busy, onclick: () => { if (confirm('Sign out that device?')) run(() => sync.revokeDevice(d.id), 'Device removed'); } }, 'Remove')))) : h('p', {}, navigator.onLine ? 'Loading...' : 'Connect to see devices.'),
+      h('button', { class: 'sx-btn', disabled: busy || !devices || devices.length < 2, onclick: () => run(() => sync.apiCall('/api/auth/logout-all', { method: 'POST' }), 'Signed out everywhere else') }, 'Sign out all other devices'));
+  }
 
-    const [lp1, pw1] = field('Passphrase', { type: 'password', autocomplete: 'off', placeholder: 'At least 8 characters' });
-    const e2eCard = h('div', { class: 'ss-card' }, h('h3', {}, 'End-to-end encryption'),
-      h('p', {}, e2e ? 'On. Your notes and attachments are encrypted on this device before upload; the server only sees ciphertext. Use the same passphrase on every device.'
-        : 'Encrypt note contents and attachments before they leave this device, so even the server owner cannot read them.'),
-      h('div', { class: 'ss-warn' }, 'There is no recovery. If you lose the passphrase, your cloud copy cannot be decrypted. Titles, text, pages, tags and files are hidden; ids and timestamps are not.'),
-      e2e ? h('button', { class: 'ss-btn', disabled: busy, onclick: () => { if (confirm('Turn off encryption? All data will be re-uploaded as readable text.')) run(() => sync.disableE2E(), 'Encryption turned off'); } }, 'Turn off encryption')
-        : [lp1, h('button', { class: 'ss-btn primary', disabled: busy, onclick: () => run(() => sync.enableE2E(pw1.value), 'Encryption on. Re-uploading...') }, 'Turn on encryption')],
-      !e2e ? h('p', {}, 'Already enabled on another device? Enter the same passphrase here to unlock.') : null);
+  function twofaCard() {
+    const u = info?.user || {};
+    if (codes) return h('div', { class: 'sx-card' }, h('h3', {}, 'Save your recovery codes'), h('p', {}, 'Each code works once if you lose your authenticator. They are not shown again.'),
+      h('pre', { style: { userSelect: 'all', margin: 0 } }, codes.join('\n')), h('button', { class: 'sx-btn primary', onclick: () => { codes = null; paint(); } }, 'I saved them'));
+    if (u.twoFactor) {
+      const [l1, pw] = field('Password', { type: 'password', autocomplete: 'current-password' });
+      const [l2, code] = field('Authenticator code', { type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code' });
+      return h('div', { class: 'sx-card' }, h('h3', {}, 'Two-factor authentication'), h('span', { class: 'sx-badge ok' }, 'On'), l1, l2,
+        h('button', { class: 'sx-btn danger', disabled: busy, onclick: () => run(() => sync.apiCall('/api/auth/2fa/disable', { method: 'POST', json: { password: pw.value, code: code.value } }), 'Two-factor turned off') }, 'Turn off'));
+    }
+    if (twofa) {
+      const [l1, code] = field('6-digit code from your app', { type: 'text', inputmode: 'numeric', autocomplete: 'one-time-code', maxlength: 7 });
+      return h('div', { class: 'sx-card' }, h('h3', {}, 'Set up an authenticator app'),
+        h('p', {}, 'Add this key to Google Authenticator, 1Password, Aegis or similar (time-based, 6 digits).'),
+        h('pre', { style: { userSelect: 'all', margin: 0, whiteSpace: 'pre-wrap', wordBreak: 'break-all' } }, twofa.secret),
+        h('a', { href: twofa.otpauth }, 'Open in authenticator app'), l1,
+        msg ? h('div', { class: 'sx-err' }, msg) : null,
+        h('button', { class: 'sx-btn primary', disabled: busy, onclick: () => run(async () => { const r = await sync.apiCall('/api/auth/2fa/enable', { method: 'POST', json: { code: code.value } }); codes = r.recoveryCodes; twofa = null; }) }, 'Verify and turn on'));
+    }
+    return h('div', { class: 'sx-card' }, h('h3', {}, 'Two-factor authentication'), h('p', {}, 'Add a second step at sign-in with an authenticator app.'),
+      h('button', { class: 'sx-btn', disabled: busy, onclick: () => run(async () => { twofa = await sync.apiCall('/api/auth/2fa/setup', { method: 'POST' }); }) }, 'Set up'));
+  }
 
+  function e2eCard() {
+    const [lp, pw] = field('Passphrase', { type: 'password', autocomplete: 'off', placeholder: 'At least 8 characters' });
+    return h('div', { class: 'sx-card' }, h('h3', {}, 'End-to-end encryption'),
+      h('p', {}, e2e ? 'On. Your notes and attachments are encrypted on this device before upload. Use the same passphrase on every device.' : 'Encrypt note contents and attachments before they leave this device, so even the server owner cannot read them.'),
+      h('div', { class: 'sx-warn' }, 'There is no recovery: if you lose the passphrase, your cloud copy cannot be decrypted. Sharing with other people and public links do not work for encrypted notes.'),
+      e2e ? h('button', { class: 'sx-btn', disabled: busy, onclick: () => { if (confirm('Turn off encryption? Everything is re-uploaded as readable data.')) run(() => sync.disableE2E(), 'Encryption off'); } }, 'Turn off')
+        : [lp, h('button', { class: 'sx-btn primary', disabled: busy, onclick: () => run(() => sync.enableE2E(pw.value), 'Encryption on. Re-uploading...') }, 'Turn on')]);
+  }
+
+  function accountCard() {
     const [a1, oldPw] = field('Current password', { type: 'password', autocomplete: 'current-password' });
-    const [a2, newPw] = field('New password', { type: 'password', autocomplete: 'new-password' });
-    const acct = h('details', { class: 'ss-card' }, h('summary', {}, 'Account'),
-      a1, a2,
-      h('div', { class: 'ss-row' },
-        h('button', { class: 'ss-btn', disabled: busy, onclick: () => run(() => sync.changePassword(oldPw.value, newPw.value), 'Password changed') }, 'Change password'),
-        h('button', { class: 'ss-btn danger', disabled: busy, onclick: () => { if (confirm('Permanently delete your cloud account and all synced data? Notes on this device are kept.')) run(() => sync.deleteAccount(oldPw.value), 'Account deleted'); } }, 'Delete account')),
+    const [a2, newPw] = field('New password (10+ characters)', { type: 'password', autocomplete: 'new-password' });
+    return h('details', { class: 'sx-card' }, h('summary', {}, 'Password and account'), a1, a2,
+      h('div', { class: 'sx-row' },
+        h('button', { class: 'sx-btn', disabled: busy, onclick: () => run(() => sync.changePassword(oldPw.value, newPw.value), 'Password changed; other devices signed out') }, 'Change password'),
+        h('button', { class: 'sx-btn danger', disabled: busy, onclick: async () => {
+          if (!confirm('Delete your cloud account and all synced data? Notes on this device are kept.')) return;
+          if (confirm('Download all your notes as PDFs first? (recommended)')) { try { const m = await import('../features/export.js'); await m.exportNotebook('all', 'pdf'); } catch (e) { toast('Export failed: ' + errText(e)); return; } }
+          run(() => sync.deleteAccount(oldPw.value), 'Account deleted');
+        } }, 'Delete account')),
       h('p', {}, 'Deleting needs your current password in the first field.'));
-    return [card, devCard, e2eCard, acct];
   }
-
-  function stat(l, v) { return h('div', { class: 'ss-stat' }, h('b', {}, v), h('span', {}, l)); }
 
   function paint() {
     if (!alive) return;
-    const focus = document.activeElement;
-    // do not clobber text the user is typing
-    if (root.contains(focus) && focus.tagName === 'INPUT' && focus.value && !busy) return;
-    root.replaceChildren(...[auth?.token ? signedIn() : signedOut()].flat());
+    const f = document.activeElement;
+    if (root.contains(f) && f.tagName === 'INPUT' && f.value && !busy) return; // do not clobber typing
+    root.replaceChildren(...(auth?.token ? [profile(), status(), devicesCard(), twofaCard(), e2eCard(), accountCard()] : [signedOut()]));
   }
-
-  const off = on('sync:status', () => { if (alive) paint(); });
+  const off = [on('sync:status', paint), on('auth:changed', load)];
   const tick = setInterval(() => { if (auth?.token && !busy) paint(); }, 15000);
   load();
-  return { destroy() { alive = false; off(); clearInterval(tick); root.remove(); } };
+  return { destroy() { alive = false; off.forEach((o) => o()); clearInterval(tick); root.remove(); } };
 }
 export default mountSyncSettings;
