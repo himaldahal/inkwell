@@ -456,3 +456,42 @@ def report_resolve(request, rid):
     r.save()
     audit(request, "admin.report_closed", r.target, r.kind)
     return JsonResponse({"ok": True})
+
+
+# ---- mail abuse panel ----
+@api(("GET", "POST"), staff=True)
+def mail_panel(request):
+    from . import emails
+    from .models import MailQueue, SuppressedAddress
+
+    if request.method == "POST":
+        b = parse_json(request) or {}
+        if b.get("flush"):
+            return JsonResponse({"sent": emails.flush_queue(20)})
+        email = str(b.get("email") or "").strip().lower()
+        if "@" not in email:
+            return err("invalid address")
+        SuppressedAddress.objects.get_or_create(email=email, defaults={"reason": b.get("reason") if b.get("reason") in ("bounce", "complaint") else "manual"})
+        audit(request, "admin.suppress", None, email)
+        return JsonResponse({"ok": True})
+    day = timezone.now() - timedelta(days=1)
+    recent = MailQueue.objects.filter(created_at__gte=day)
+    return JsonResponse({
+        "counts": {r["status"]: r["n"] for r in MailQueue.objects.values("status").annotate(n=Count("id"))},
+        "recent": [{"at": m.created_at.isoformat(), "to": m.to, "kind": m.kind, "status": m.status, "note": m.note, "ip": m.ip} for m in MailQueue.objects.order_by("-id")[:100]],
+        "topRecipients": list(recent.values("to").annotate(n=Count("id")).order_by("-n")[:10]),
+        "topIps": list(recent.exclude(ip="").values("ip").annotate(n=Count("id")).order_by("-n")[:10]),
+        "suppressed": [{"id": s.uid, "email": s.email, "reason": s.reason, "at": s.created_at.isoformat()} for s in SuppressedAddress.objects.order_by("-id")[:200]],
+        "alerts": [{"at": a.created_at.isoformat(), "detail": a.detail} for a in AuditLog.objects.filter(event="mail.alert").order_by("-id")[:20]],
+        "caps": {"recipientHour": settings.MAIL_PER_RECIPIENT_HOURLY, "recipientDay": settings.MAIL_PER_RECIPIENT_DAILY, "ipHour": settings.MAIL_PER_IP_HOURLY,
+                 "accountHour": settings.MAIL_PER_ACCOUNT_HOURLY, "globalHour": settings.MAIL_GLOBAL_HOURLY, "perMinute": settings.MAIL_PER_MINUTE},
+    })
+
+
+@api(("DELETE",), staff=True)
+def suppress_delete(request, sid):
+    from .models import SuppressedAddress
+
+    SuppressedAddress.objects.filter(uid=sid).delete()
+    audit(request, "admin.unsuppress", None, sid)
+    return JsonResponse({"ok": True})

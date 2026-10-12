@@ -28,6 +28,13 @@ def purge_qs(qs):
 
 def maybe_cleanup():
     """Opportunistic cleanup (hourly per process) so no cron is required."""
+    if cache.add("mail:flush", 1, 30):  # opportunistic queue flush
+        try:
+            from . import emails
+
+            emails.flush_queue(5)
+        except Exception:  # noqa: BLE001
+            pass
     if settings.TRASH_RETENTION_DAYS and cache.add("trash:gc", 1, 3600):
         try:
             purge_expired()

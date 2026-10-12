@@ -458,3 +458,37 @@ class PendingInvite(models.Model):
 
     class Meta:
         unique_together = [("owner", "email", "kind", "record_id")]
+
+
+class MailQueue(models.Model):
+    """Outgoing e-mail queue (no Celery): flushed in small throttled batches by the requests that enqueue/poll."""
+
+    uid = models.CharField(max_length=32, unique=True, default=new_uid)
+    created_at = models.DateTimeField(default=timezone.now, db_index=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+    to = models.CharField(max_length=254, db_index=True)
+    subject = models.CharField(max_length=250)
+    text = models.TextField()
+    html = models.TextField(blank=True, default="")
+    kind = models.CharField(max_length=16, default="mail")
+    ip = models.CharField(max_length=45, blank=True, default="")
+    user_id = models.BigIntegerField(null=True, blank=True)
+    status = models.CharField(max_length=12, default="queued", db_index=True)  # queued|sent|failed|suppressed
+    tries = models.PositiveIntegerField(default=0)
+    note = models.CharField(max_length=200, blank=True, default="")
+
+
+class SuppressedAddress(models.Model):
+    uid = models.CharField(max_length=32, unique=True, default=new_uid)
+    email = models.CharField(max_length=254, unique=True)
+    reason = models.CharField(max_length=12, default="manual")  # bounce | complaint | manual
+    created_at = models.DateTimeField(default=timezone.now)
+
+
+class Cooldown(models.Model):
+    """Server-enforced resend cooldown with exponential growth (keyed by ip|address)."""
+
+    key = models.CharField(max_length=190, unique=True)
+    count = models.PositiveIntegerField(default=0)
+    until = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(default=timezone.now)

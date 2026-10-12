@@ -12,7 +12,7 @@ from .sanitize import sanitize_html
 from .tests import Base, j, rec
 
 User = get_user_model()
-PW = "correct-horse-42"
+PW = "Correct-Horse-42"
 
 
 class Helpers(Base):
@@ -53,7 +53,7 @@ class InternalModeTests(Helpers):
         self.assertTrue(t["mustChangePassword"])
         self.assertEqual(self.get("/api/sync/pull", t["token"]).status_code, 403)
         self.assertEqual(self.get("/api/auth/me", t["token"]).status_code, 200)
-        r = self.post("/api/auth/password", {"oldPassword": temp, "newPassword": "my-brand-new-pass-9"}, t["token"])
+        r = self.post("/api/auth/password", {"oldPassword": temp, "newPassword": "My-Brand-New-Pass-9"}, t["token"])
         self.assertEqual(r.status_code, 200)
         self.assertEqual(self.get("/api/sync/pull", t["token"]).status_code, 200)
         # reset + deactivate
@@ -133,9 +133,9 @@ class CommercialModeTests(Helpers):
         self.assertIn("#/auth/reset?token=", mail.outbox[0].body)
         tok = self.token_from_mail()
         self.assertEqual(self.post("/api/auth/reset", {"token": tok, "newPassword": "123"}).status_code, 400)  # weak: link survives
-        self.assertEqual(self.post("/api/auth/reset", {"token": tok, "newPassword": "totally-new-pass-55"}).status_code, 200)
-        self.assertEqual(self.post("/api/auth/reset", {"token": tok, "newPassword": "totally-new-pass-66"}).status_code, 400)
-        self.assertEqual(self.post("/api/auth/login", {"email": "gus@example.com", "password": "totally-new-pass-55", "deviceId": "q"}).status_code, 200)
+        self.assertEqual(self.post("/api/auth/reset", {"token": tok, "newPassword": "Totally-New-Pass-55"}).status_code, 200)
+        self.assertEqual(self.post("/api/auth/reset", {"token": tok, "newPassword": "Totally-New-Pass-66"}).status_code, 400)
+        self.assertEqual(self.post("/api/auth/login", {"email": "gus@example.com", "password": "Totally-New-Pass-55", "deviceId": "q"}).status_code, 200)
 
     @override_settings(SMTP_ENABLED=False)
     def test_forgot_unavailable_without_smtp(self):
@@ -546,3 +546,100 @@ class SecurityTests(Helpers):
 
         self.assertEqual(trash.purge_expired(), 1)
         self.assertEqual(j(self.get("/api/trash", t))["items"], [])
+
+
+@override_settings(DEPLOYMENT_MODE="commercial", ALLOW_REGISTRATION=True, SMTP_ENABLED=True, REQUIRE_EMAIL_VERIFICATION=True)
+class MailAbuseTests(Helpers):
+    def solve(self, purpose):
+        import hashlib
+
+        ch = j(self.get(f"/api/pow?purpose={purpose}"))
+        n = 0
+        while True:
+            h = hashlib.sha256(f"{ch['challenge']}:{n}".encode()).hexdigest()
+            if int(h, 16) >> (256 - ch["difficulty"]) == 0:
+                return {"challenge": ch["challenge"], "nonce": str(n)}
+            n += 1
+
+    def test_password_rules_server_side(self):
+        for pw in ("short1A", "alllowercase123", "ALLUPPERCASE123", "NoDigitsHereAtAll", "password1234"):
+            r = self.post("/api/auth/register", {"email": "pw@example.com", "password": pw})
+            self.assertEqual(r.status_code, 400, pw)
+
+    @override_settings(POW_REQUIRED=True, POW_BITS=8)
+    def test_pow_required_single_use_and_ip_bound(self):
+        body = {"email": "pow@example.com", "password": "Correct-Horse-42"}
+        self.assertEqual(self.post("/api/auth/register", body).status_code, 400)
+        proof = self.solve("register")
+        self.assertEqual(self.post("/api/auth/register", {**body, "pow": {**proof, "nonce": "x"}}).status_code, 400)
+        r = self.post("/api/auth/register", {**body, "pow": proof})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.post("/api/auth/register", {**body, "email": "pow2@example.com", "pow": proof}).status_code, 400)  # replay
+        self.assertEqual(self.post("/api/auth/forgot", {"email": "a@b.co", "pow": self.solve("register")}).status_code, 400)  # wrong purpose
+
+    def test_cooldown_grows_and_response_is_uniform(self):
+        self.make_user("cd", email="cd@example.com")
+        mail.outbox.clear()
+        a = j(self.post("/api/auth/forgot", {"email": "cd@example.com"}))
+        b = j(self.post("/api/auth/forgot", {"email": "cd@example.com"}))
+        ghost = j(self.post("/api/auth/forgot", {"email": "ghost@example.com"}))
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(a["retryAfter"], 60)
+        self.assertGreater(b["retryAfter"], 50)
+        self.assertEqual(set(a), set(ghost))
+        from .models import Cooldown
+
+        Cooldown.objects.update(until=timezone.now() - timedelta(seconds=1))
+        c = j(self.post("/api/auth/forgot", {"email": "cd@example.com"}))
+        self.assertEqual(c["retryAfter"], 120)  # doubled
+
+    def test_recipient_caps_suppress_list_and_alert(self):
+        u, _ = self.make_user("cap", email="cap@example.com")
+        from . import emails
+
+        for _i in range(5):
+            emails.send_verify(None, u, "t")
+        self.assertEqual(len([m for m in mail.outbox if m.to == ["cap@example.com"]]), 3)  # max 3 per hour
+        self.assertTrue(AuditLog.objects.filter(event="mail.alert").exists())
+        from .models import MailQueue, SuppressedAddress
+
+        self.assertTrue(MailQueue.objects.filter(status="suppressed").exists())
+        n = len(mail.outbox)
+        SuppressedAddress.objects.create(email="blocked@example.com")
+        self.assertFalse(emails.send("blocked@example.com", "x", "x", "x", "x"))
+        self.assertEqual(len(mail.outbox), n)
+
+    def test_invite_caps_and_unverified_sender_sends_no_mail(self):
+        o, ot = self.make_user("own")
+        b, bt = self.make_user("bob")
+        self.push(ot, rec("notes", "n1", 1, title="x"))
+        Profile.objects.filter(user=o).update(email_verified=False)
+        mail.outbox.clear()
+        self.post("/api/share/people", {"kind": "notes", "id": "n1", "email": "bob@example.com"}, ot)
+        self.assertEqual(mail.outbox, [])  # unverified accounts trigger no e-mail
+        Profile.objects.filter(user=o).update(email_verified=True)
+        for _i in range(3):
+            r = self.post("/api/share/people", {"kind": "notes", "id": "n1", "email": "ghost@example.com"}, ot)
+            self.assertEqual(r.status_code, 202)  # uniform even when capped per address
+        with override_settings(INVITES_PER_DAY=2):
+            self.assertEqual(self.post("/api/share/people", {"kind": "notes", "id": "n1", "email": "x@example.com"}, ot).status_code, 429)
+
+    def test_admin_mail_panel_and_suppress(self):
+        _, admin = self.make_user("root", staff=True)
+        u, _ = self.make_user("v", email="v@example.com")
+        from . import emails
+
+        emails.send_welcome(None, u)
+        d = j(self.get("/api/admin/mail", admin))
+        self.assertEqual(d["recent"][0]["to"], "v@example.com")
+        self.assertEqual(self.post("/api/admin/mail", {"email": "bad@example.com"}, admin).status_code, 200)
+        sid = j(self.get("/api/admin/mail", admin))["suppressed"][0]["id"]
+        self.assertEqual(self.c.delete(f"/api/admin/mail/suppress/{sid}", **self.auth(admin)).status_code, 200)
+        _, normal = self.make_user("n")
+        self.assertEqual(self.get("/api/admin/mail", normal).status_code, 403)
+
+    def test_create_admin_command_skips_validators(self):
+        from django.core.management import call_command
+
+        call_command("create_admin", email="boss@example.com", password="weak")
+        self.assertTrue(User.objects.get(email="boss@example.com").is_staff)

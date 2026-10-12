@@ -14,6 +14,7 @@ urlpatterns = [
     path("auth/delete", views_auth.delete_account),
     path("auth/verify", views_auth.verify),
     path("auth/resend", views_auth.resend),
+    path("pow", views_auth.pow_challenge),
     path("auth/forgot", views_auth.forgot),
     path("auth/reset", views_auth.reset),
     path("auth/avatar", views_auth.avatar_upload),
@@ -66,5 +67,7 @@ urlpatterns = [
     path("admin/health", views_admin.health),
     path("admin/test-email", views_admin.test_email),
     path("admin/trash", views_admin.trash_admin),
+    path("admin/mail", views_admin.mail_panel),
+    path("admin/mail/suppress/<str:sid>", views_admin.suppress_delete),
     path("admin/stats", views_admin.stats),
 ]

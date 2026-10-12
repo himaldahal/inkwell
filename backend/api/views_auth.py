@@ -11,9 +11,9 @@ from django.db import transaction
 from django.http import FileResponse, JsonResponse
 from django.utils import timezone
 
-from . import access, emails, quota, runtime, security, totp, validate
+from . import access, emails, pow as powmod, quota, runtime, security, totp, validate
 from .audit import audit
-from .models import AssetBlob, Device, EmailToken, Profile, Record, Token, hash_key, new_uid, now_ms
+from .models import AssetBlob, Cooldown, Device, EmailToken, Profile, Record, Token, hash_key, new_uid, now_ms
 from .useragent import parse_ua
 from .util import api, client_ip, err, hit, parse_json, public_user
 
@@ -97,6 +97,8 @@ def register(request):
     if str(b.get("website") or "").strip() or (b.get("elapsedMs") is not None and int(b.get("elapsedMs") or 0) < 1200):
         security.record_event(request, None, _norm_email(b.get("email")), "blocked", False)
         return JsonResponse({"verificationRequired": True})
+    if not powmod.verify(request, "register", b.get("pow")):
+        return err("please retry (proof of work failed)", 400, code="pow-required")
     email, password = _norm_email(b.get("email")), str(b.get("password") or "")
     name = validate.plain(b.get("displayName") or "", 60)
     try:
@@ -332,31 +334,69 @@ def verify(request):
     return err("this link is invalid or has expired", 400)
 
 
+def cooldown(key, base=None):
+    """Server-enforced resend cooldown, doubling per use within 24 h (cap 1 h). -> (seconds_left, allowed_now)"""
+    from datetime import timedelta
+
+    base = base or settings.EMAIL_RESEND_SECONDS
+    now = timezone.now()
+    c, _ = Cooldown.objects.get_or_create(key=key[:190])
+    if c.updated_at < now - timedelta(hours=24):
+        c.count, c.until = 0, None
+    if c.until and c.until > now:
+        return int((c.until - now).total_seconds()) + 1, False
+    c.count += 1
+    c.until = now + timedelta(seconds=min(3600, base * 2 ** (c.count - 1)))
+    c.updated_at = now
+    c.save()
+    return int((c.until - now).total_seconds()), True
+
+
 @api(("POST",), auth=False)
 def resend(request):
-    email = _norm_email((parse_json(request) or {}).get("email"))
-    if not hit(f"resendip:{client_ip(request)}", 10, 3600):
+    b = parse_json(request) or {}
+    email = _norm_email(b.get("email"))
+    ip = client_ip(request)
+    if security.is_blocked(request, email) or not hit(f"resendip:{ip}", 10, 3600):
         return err("too many attempts, try again later", 429)
-    if email and hit(f"resend:{email}", 1, settings.EMAIL_RESEND_SECONDS):
+    if not powmod.verify(request, "resend", b.get("pow")):
+        return err("please retry (proof of work failed)", 400, code="pow-required")
+    wait, ok = cooldown(f"resend:{ip}|{email}")
+    if ok and email:
         u = User.objects.filter(email=email, is_active=True).first()
         if u and not Profile.of(u).email_verified and settings.SMTP_ENABLED:
             emails.send_verify(request, u, EmailToken.issue(u, EmailToken.VERIFY))
-    return JsonResponse({"ok": True})
+    return JsonResponse({"ok": True, "retryAfter": wait})  # identical whether or not anything was sent
 
 
 @api(("POST",), auth=False)
 def forgot(request):
     if not settings.SMTP_ENABLED:
         return err("Password reset by e-mail is not available on this server. Ask an administrator to reset it.", 501)
-    email = _norm_email((parse_json(request) or {}).get("email"))
-    if not hit(f"forgotip:{client_ip(request)}", 10, 3600):
+    b = parse_json(request) or {}
+    email = _norm_email(b.get("email"))
+    ip = client_ip(request)
+    if security.is_blocked(request, email) or not hit(f"forgotip:{ip}", 10, 3600):
         return err("too many attempts, try again later", 429)
-    if email and hit(f"forgot:{email}", 1, settings.EMAIL_RESEND_SECONDS):
+    if str(b.get("website") or "").strip() or (b.get("elapsedMs") is not None and int(b.get("elapsedMs") or 0) < 800):
+        return JsonResponse({"ok": True, "retryAfter": 60})  # bot traps answer like a normal request
+    if not powmod.verify(request, "forgot", b.get("pow")):
+        return err("please retry (proof of work failed)", 400, code="pow-required")
+    wait, ok = cooldown(f"forgot:{ip}|{email}")
+    if ok and email:
         u = User.objects.filter(email=email, is_active=True).first()
         if u:
             emails.send_reset(request, u, EmailToken.issue(u, EmailToken.RESET))
             audit(request, "password_reset_requested", u)
-    return JsonResponse({"ok": True})
+    return JsonResponse({"ok": True, "retryAfter": wait})
+
+
+@api(("GET",), auth=False)
+def pow_challenge(request):
+    purpose = request.GET.get("purpose", "")
+    if purpose not in ("register", "forgot", "resend"):
+        return err("bad purpose", 400)
+    return JsonResponse(powmod.issue(request, purpose))
 
 
 @api(("POST",), auth=False)
@@ -401,7 +441,8 @@ def device_detail(request, device_id):
 
 
 def temp_password():
-    return secrets.token_urlsafe(9) + "-" + str(secrets.randbelow(90) + 10)
+    """Always satisfies the password rules (upper, lower, number, 10+ chars)."""
+    return secrets.token_urlsafe(9) + "-Aa" + str(secrets.randbelow(90) + 10)
 
 
 @api(("POST",))

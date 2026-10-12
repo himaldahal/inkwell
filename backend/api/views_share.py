@@ -71,8 +71,10 @@ def people(request):
     email = str(b.get("email") or "").strip().lower()
     if kind not in ("notes", "notebooks") or not role or not rid:
         return err("invalid request")
-    if not hit(f"share:{me.pk}", settings.SHARE_RATE_LIMIT, 3600):
+    if not hit(f"share:{me.pk}", settings.SHARE_RATE_LIMIT, 3600) or not hit(f"inv-d:{me.pk}", settings.INVITES_PER_DAY, 86400):
         return err("too many invitations, try again later", 429)
+    if email and not hit(f"inv-a:{me.pk}:{email}", settings.INVITES_PER_ADDRESS_DAILY, 86400):
+        return JsonResponse({"ok": True, "pending": True, "message": "If that person has an account they will be notified."}, status=202)
     if not Record.objects.filter(user=me, kind=kind, record_id=rid, deleted=False).exists():
         return err("sync this item before sharing it", 409)
     target = User.objects.filter(email=email, is_active=True).first() if email else None

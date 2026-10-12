@@ -117,7 +117,15 @@ TURN_URL = env("TURN_URL", "")
 TURN_USERNAME = env("TURN_USERNAME", "")
 TURN_CREDENTIAL = env("TURN_CREDENTIAL", "")
 TURN_SECRET = env("TURN_SECRET", "")  # shared secret for ephemeral (HMAC) TURN credentials
-MAIL_PER_RECIPIENT_HOURLY = env_int("MAIL_PER_RECIPIENT_HOURLY", 5)
+MAIL_PER_RECIPIENT_HOURLY = env_int("MAIL_PER_RECIPIENT_HOURLY", 3)
+MAIL_PER_RECIPIENT_DAILY = env_int("MAIL_PER_RECIPIENT_DAILY", 10)
+MAIL_PER_ACCOUNT_HOURLY = env_int("MAIL_PER_ACCOUNT_HOURLY", 10)
+MAIL_PER_MINUTE = env_int("MAIL_PER_MINUTE", 20)  # send throttle for the DB queue
+INVITES_PER_DAY = env_int("INVITES_PER_DAY", 20)
+INVITES_PER_ADDRESS_DAILY = env_int("INVITES_PER_ADDRESS_DAILY", 2)
+POW_REQUIRED = env_bool("POW_REQUIRED", "test" not in sys.argv[:2])  # hashcash on register/forgot/resend
+POW_BITS = env_int("POW_BITS", 12)
+POW_BITS_ABUSE = env_int("POW_BITS_ABUSE", 17)
 MAIL_PER_IP_HOURLY = env_int("MAIL_PER_IP_HOURLY", 20)
 MAIL_GLOBAL_HOURLY = env_int("MAIL_GLOBAL_HOURLY", 200)
 LOCKOUT_AFTER = env_int("LOCKOUT_AFTER", 5)
@@ -215,6 +223,7 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 10}},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
+    {"NAME": "api.validators.MixedCaseDigitValidator"},
 ]
 
 LANGUAGE_CODE = "en-us"

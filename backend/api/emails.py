@@ -4,6 +4,7 @@ from html import escape
 
 from django.conf import settings
 from django.core.mail import EmailMultiAlternatives
+from django.utils import timezone
 
 log = logging.getLogger(__name__)
 
@@ -31,35 +32,92 @@ def _layout(title, body_html, button=None):
             '</div></body></html>') % (escape(title), body_html, btn)
 
 
-def _caps_ok(to, request):
+def _alert(detail):
+    """Admin-visible alert, at most once per hour per detail."""
+    from .models import AuditLog
+    from .util import hit
+
+    if hit("alert:" + detail[:120], 1, 3600):
+        AuditLog.objects.create(event="mail.alert", detail=detail[:300])
+
+
+def _suppress(to, subject, why, request, kind):
+    from .models import MailQueue
+    from .util import client_ip
+
+    log.warning("e-mail to %s suppressed: %s", to, why)
+    MailQueue.objects.create(to=to, subject=subject[:250], text="", kind=kind, status="suppressed", note=why[:200],
+                             ip=client_ip(request) if request is not None else "")
+    if why.startswith("cap"):
+        _alert(f"cap hit: {why} ({to})")
+    return False
+
+
+def _allowed(to, request, user, kind):
+    """None when sending is fine, else the reason it was suppressed (callers always answer uniformly)."""
+    from .models import SuppressedAddress
     from .util import client_ip, hit
 
+    if SuppressedAddress.objects.filter(email=to).exists():
+        return "suppress-list"
     ip = client_ip(request) if request is not None else "-"
-    return (hit(f"mail-to:{to.lower()}", settings.MAIL_PER_RECIPIENT_HOURLY, 3600)
-            and hit(f"mail-ip:{ip}", settings.MAIL_PER_IP_HOURLY, 3600)
-            and hit("mail-all", settings.MAIL_GLOBAL_HOURLY, 3600))
+    if not hit(f"mail-to-h:{to}", settings.MAIL_PER_RECIPIENT_HOURLY, 3600):
+        return "cap: recipient/hour"
+    if not hit(f"mail-to-d:{to}", settings.MAIL_PER_RECIPIENT_DAILY, 86400):
+        return "cap: recipient/day"
+    if not hit(f"mail-ip:{ip}", settings.MAIL_PER_IP_HOURLY, 3600):
+        return "cap: ip/hour"
+    if user is not None and not hit(f"mail-u:{user.pk}", settings.MAIL_PER_ACCOUNT_HOURLY, 3600):
+        return "cap: account/hour"
+    if not hit("mail-all", settings.MAIL_GLOBAL_HOURLY, 3600):
+        return "cap: global/hour"
+    return None
 
 
-def send(to, subject, text, title, body_html, button=None, request=None):
-    if not to or not _caps_ok(to, request):
-        log.warning("e-mail to %s suppressed by rate cap", to)
+def flush_queue(limit=5):
+    """Send a few queued messages (throttled per minute). Called opportunistically; no worker needed."""
+    from .models import MailQueue, SuppressedAddress
+    from .util import hit
+
+    sent = 0
+    for m in MailQueue.objects.filter(status="queued").order_by("id")[:limit]:
+        if not hit("mail-send-min", settings.MAIL_PER_MINUTE, 60):
+            break
+        msg = EmailMultiAlternatives(m.subject, m.text, settings.DEFAULT_FROM_EMAIL, [m.to])
+        if m.html:
+            msg.attach_alternative(m.html, "text/html")
+        m.tries += 1
         try:
-            from .models import AuditLog
+            msg.send(fail_silently=False)
+            m.status, m.sent_at = "sent", timezone.now()
+            sent += 1
+        except Exception as e:  # noqa: BLE001
+            m.note = str(e)[:200]
+            if getattr(e, "smtp_code", 0) in range(550, 560):  # permanent rejection: stop mailing this address
+                SuppressedAddress.objects.get_or_create(email=m.to, defaults={"reason": "bounce"})
+                m.status = "failed"
+            elif m.tries >= 3:
+                m.status = "failed"
+        m.save()
+    return sent
 
-            AuditLog.objects.create(event="mail.suppressed", detail=f"to {to}: {subject}"[:300])
-        except Exception:  # noqa: BLE001
-            pass
+
+def send(to, subject, text, title, body_html, button=None, request=None, kind="mail", user=None):
+    to = (to or "").strip().lower()
+    if not to:
         return False
+    why = _allowed(to, request, user, kind)
+    if why:
+        return _suppress(to, subject, why, request, kind)
+    from .models import MailQueue
+    from .util import client_ip
+
     if button:
         text = f"{text}\n\n{button[0]}: {button[1]}\n"
-    msg = EmailMultiAlternatives(subject, text + "\n-- Inkwell", settings.DEFAULT_FROM_EMAIL, [to])
-    msg.attach_alternative(_layout(title, body_html, button), "text/html")
-    try:
-        msg.send(fail_silently=False)
-        return True
-    except Exception as e:  # noqa: BLE001
-        log.warning("e-mail to %s failed: %s", to, e)
-        return False
+    MailQueue.objects.create(to=to, subject=subject[:250], text=text + "\n-- Inkwell", html=_layout(title, body_html, button), kind=kind,
+                             ip=client_ip(request) if request is not None else "", user_id=user.pk if user else None)
+    flush_queue()
+    return True
 
 
 def send_verify(request, user, token, new_email=None):
@@ -67,39 +125,43 @@ def send_verify(request, user, token, new_email=None):
     to = new_email or user.email
     return send(to, "Confirm your e-mail for Inkwell", f"Hi {user.display},\n\nPlease confirm your e-mail address.",
                 "Confirm your e-mail", f"<p>Hi {escape(user.display)},</p><p>Please confirm your e-mail address to finish setting up Inkwell. The link is valid for {settings.EMAIL_TOKEN_TTL_HOURS} hours and works once.</p>",
-                ("Confirm e-mail", link), request=request)
+                ("Confirm e-mail", link), request=request, kind="verify", user=user)
 
 
 def send_reset(request, user, token):
     link = f"{origin(request)}/#/auth/reset?token={token}"
     return send(user.email, "Reset your Inkwell password", f"Hi {user.display},\n\nSomeone asked to reset your password. If it was you, use the link below.",
                 "Reset your password", f"<p>Hi {escape(user.display)},</p><p>Someone asked to reset your password. If it was you, choose a new one with the button below. The link expires in {settings.EMAIL_TOKEN_TTL_HOURS} hours and works once.</p>",
-                ("Choose a new password", link), request=request)
+                ("Choose a new password", link), request=request, kind="reset", user=user)
 
 
 def send_welcome(request, user):
     return send(user.email, "Welcome to Inkwell", f"Welcome, {user.display}! Your account is ready.",
                 "Welcome to Inkwell", f"<p>Welcome, {escape(user.display)}! Your account is ready. Your notes work offline and sync whenever you are connected.</p>",
-                ("Open Inkwell", origin(request) + "/"), request=request)
+                ("Open Inkwell", origin(request) + "/"), request=request, kind="welcome", user=user)
 
 
 def send_share(request, owner, recipient, title, role):
+    from .models import Profile
+
+    if not Profile.of(owner).email_verified or not Profile.of(recipient).email_verified:
+        return False  # unverified accounts never trigger e-mail
     link = origin(request) + "/#/shared"
     t = title or "Untitled"
     return send(recipient.email, f"{owner.display} shared \"{t}\" with you",
                 f"{owner.display} shared \"{t}\" with you as {role}.",
                 "A note was shared with you", f"<p><b>{escape(owner.display)}</b> shared <b>{escape(t)}</b> with you ({escape(role)}).</p>",
-                ("Open shared notes", link), request=request)
+                ("Open shared notes", link), request=request, kind="share", user=owner)
 
 
 def send_new_device(request, user, dev):
     return send(user.email, "New sign-in to your Inkwell account",
                 f"A new device signed in: {dev.browser or 'browser'} on {dev.os or 'unknown OS'}. If this was not you, change your password.",
                 "New device sign-in", f"<p>A new device signed in to your account: <b>{escape(dev.browser or 'Browser')}</b> on <b>{escape(dev.os or 'unknown OS')}</b>.</p>"
-                "<p>If this was not you, change your password and remove the device in Settings.</p>", request=request)
+                "<p>If this was not you, change your password and remove the device in Settings.</p>", request=request, kind="security", user=user)
 
 
 def send_already_registered(request, user):
     return send(user.email, "Inkwell sign-up attempt", "Someone tried to create an account with this address, but you already have one.",
                 "You already have an account", "<p>Someone tried to sign up with this e-mail address, but an account already exists. If it was you, just sign in or reset your password.</p>",
-                ("Open Inkwell", origin(request) + "/#/auth/login"), request=request)
+                ("Open Inkwell", origin(request) + "/#/auth/login"), request=request, kind="notice", user=user)

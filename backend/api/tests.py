@@ -33,12 +33,12 @@ class Base(TestCase):
         h = {"HTTP_AUTHORIZATION": f"Bearer {token}"} if token else {}
         return self.c.get(path, **h, **extra)
 
-    def register(self, name="alice", device="dev-a", pw="correct-horse-42"):
+    def register(self, name="alice", device="dev-a", pw="Correct-Horse-42"):
         r = self.post("/api/auth/register", {"email": f"{name}@example.com", "password": pw, "deviceId": device, "deviceName": device})
         self.assertEqual(r.status_code, 200, r.content)
         return j(r)["token"]
 
-    def login(self, name="alice", device="dev-b", pw="correct-horse-42"):
+    def login(self, name="alice", device="dev-b", pw="Correct-Horse-42"):
         r = self.post("/api/auth/login", {"email": f"{name}@example.com", "password": pw, "deviceId": device, "deviceName": device})
         self.assertEqual(r.status_code, 200, r.content)
         return j(r)["token"]
@@ -70,7 +70,7 @@ class AuthTests(Base):
 
     def test_duplicate_and_weak_password(self):
         self.register()
-        r = self.post("/api/auth/register", {"email": "ALICE@example.com", "password": "correct-horse-42"})
+        r = self.post("/api/auth/register", {"email": "ALICE@example.com", "password": "Correct-Horse-42"})
         self.assertIn(r.status_code, (409,))
         r = self.post("/api/auth/register", {"email": "bob@example.com", "password": "123"})
         self.assertEqual(r.status_code, 400)
@@ -87,27 +87,27 @@ class AuthTests(Base):
 
     @override_settings(ALLOW_REGISTRATION=False)
     def test_registration_toggle(self):
-        r = self.post("/api/auth/register", {"email": "alice@example.com", "password": "correct-horse-42"})
+        r = self.post("/api/auth/register", {"email": "alice@example.com", "password": "Correct-Horse-42"})
         self.assertEqual(r.status_code, 403)
 
     def test_change_password_signs_out_others(self):
         a = self.register()
         b = self.login()
-        r = self.post("/api/auth/password", {"oldPassword": "bad", "newPassword": "another-pass-77"}, a)
+        r = self.post("/api/auth/password", {"oldPassword": "bad", "newPassword": "Another-Pass-77"}, a)
         self.assertEqual(r.status_code, 403)
-        r = self.post("/api/auth/password", {"oldPassword": "correct-horse-42", "newPassword": "another-pass-77"}, a)
+        r = self.post("/api/auth/password", {"oldPassword": "Correct-Horse-42", "newPassword": "Another-Pass-77"}, a)
         self.assertEqual(r.status_code, 200)
         self.assertEqual(self.get("/api/auth/me", a).status_code, 200)
         self.assertEqual(self.get("/api/auth/me", b).status_code, 401)
-        self.login(pw="another-pass-77", device="dev-c")
+        self.login(pw="Another-Pass-77", device="dev-c")
 
     def test_delete_account(self):
         t = self.register()
         self.push(t, rec("notes", "n1", 1000, title="x"))
         self.assertEqual(self.post("/api/auth/delete", {"password": "no"}, t).status_code, 403)
-        self.assertEqual(self.post("/api/auth/delete", {"password": "correct-horse-42"}, t).status_code, 200)
+        self.assertEqual(self.post("/api/auth/delete", {"password": "Correct-Horse-42"}, t).status_code, 200)
         self.assertEqual(self.get("/api/auth/me", t).status_code, 401)
-        self.assertEqual(self.post("/api/auth/login", {"email": "alice@example.com", "password": "correct-horse-42"}).status_code, 401)
+        self.assertEqual(self.post("/api/auth/login", {"email": "alice@example.com", "password": "Correct-Horse-42"}).status_code, 401)
 
     def test_token_expiry_and_refresh(self):
         from datetime import timedelta
