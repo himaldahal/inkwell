@@ -531,3 +531,5 @@ textarea.input { padding: 8px 12px; resize: vertical; user-select: text; }
 .seg { flex-wrap: wrap; } [class*="tabs"] { max-width: 100%; }
 .sidebar .install { color: var(--text); } .sidebar .install[hidden] { display: none !important; }
 .empty { padding: 40px 20px; }
+
+.sb-me { gap: 10px; margin-bottom: 2px; } .sb-av { margin: 0; flex: none; } .sb-who { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; } .sb-who small { color: var(--muted); font-size: .72rem; }

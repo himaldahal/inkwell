@@ -238,3 +238,10 @@ export function shareInfo(n) {
     viewOnly: role === 'viewer' || role === 'read' || role === 'view' || role === 'view-only',
   };
 }
+
+/** display name of whoever shared a note with you (never an e-mail address) */
+export function ownerLabel(n) {
+  const o = n.sharedBy; if (!o) return '';
+  const v = typeof o === 'string' ? o : o.displayName || o.name || '';
+  return !v || v.includes('@') ? (v ? v.split('@')[0] : 'a collaborator') : v;
+}

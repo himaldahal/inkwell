@@ -9,7 +9,7 @@ import { SMART } from './templates.js';
 import { newNoteDialog, notebookDialog, deleteNotebookFlow, movePicker, quickNote } from './dialogs.js';
 import { openPalette } from './palette.js';
 import { createInstallButton } from './install.js';
-import { isStaff, canSystem, hasUi } from './config.js';
+import { isStaff, canSystem, hasUi, getMe, userName } from './config.js';
 import { isEnabled, onModuleChange } from '../core/modules.js';
 
 const DT = 'application/x-inkwell';
@@ -68,6 +68,18 @@ export function createSidebar() {
     return frag;
   }
 
+  function meRow() {
+    const me = getMe(); if (!me) return null;
+    const name = userName(me);
+    const av = h('span', { class: 'avatar sb-av', style: { background: 'var(--accent)' } }, me.avatar ? h('img', { src: me.avatar, alt: '' }) : name.slice(0, 2).toUpperCase());
+    return h('button', { class: 'nav-item sb-me', type: 'button', 'aria-haspopup': 'menu', onclick: (e) => openMenu([
+      hasUi('profile') && { label: 'Profile', icon: 'edit', onClick: () => navigate('/profile') },
+      isStaff() && hasUi('admin') && { label: 'Admin dashboard', icon: 'lock', onClick: () => navigate('/admin') },
+      canSystem() && hasUi('system') && { label: 'System', icon: 'info', onClick: () => navigate('/system') },
+      { label: 'Settings', icon: 'settings', onClick: () => navigate('/settings') }, { divider: true },
+      { label: 'Sign out', icon: 'back', danger: true, onClick: async () => { try { await (await import('../core/sync.js')).signOut(); } catch { /* offline */ } navigate('/auth/login', { replace: true }); } },
+    ], { anchor: e.currentTarget, title: name }) }, av, h('span', { class: 'grow sb-who' }, h('b', { class: 'ellipsis' }, name), me.email ? h('small', { class: 'ellipsis' }, me.email) : null), icon('chevD', 14));
+  }
   async function load() { [nbs, notes, trashedNbs] = [await A.getNotebooks(), await getAll('notes'), (await A.getTrashedNotebooks()).filter((n) => n.trashedBy === n.id || !n.trashedBy).length]; render(); }
   function render() {
     const s = getSettings();
@@ -108,7 +120,7 @@ export function createSidebar() {
         tags.length ? h('div', { class: 'sb-sec' }, h('div', { class: 'sb-title' }, h('span', {}, 'Tags')), tags.map(([t, c]) => navItem({ path: '/tag/' + encodeURIComponent(t), label: t, ic: 'tag', n: c }))) : null),
       isEnabled('study') ? h('div', { class: 'sb-sec sb-bottom' }, navItem({ path: '/study', label: 'CA Study Hub', ic: 'book' })) : '',
       h('div', { class: 'sb-sec sb-bottom' }, navItem({ path: '/archive', label: 'Archive', ic: 'archive', n: live_.filter((n) => n.archived).length || '' }), navItem({ path: '/trash', label: 'Trash', ic: 'trash', n: (notes.filter((n) => n.trashedAt).length + trashedNbs) || '' })),
-      h('div', { class: 'sb-foot' }, createInstallButton({ compact: true }), canSystem() && hasUi('system') ? h('a', { class: 'nav-item', href: '#/system', 'data-key': '/system' }, icon('lock', 18), h('span', { class: 'grow' }, 'System')) : null, isStaff() && hasUi('admin') ? h('a', { class: 'nav-item', href: '#/admin', 'data-key': '/admin' }, icon('lock', 18), h('span', { class: 'grow' }, 'Admin')) : null,
+      h('div', { class: 'sb-foot' }, createInstallButton({ compact: true }), canSystem() && hasUi('system') ? h('a', { class: 'nav-item', href: '#/system', 'data-key': '/system' }, icon('lock', 18), h('span', { class: 'grow' }, 'System')) : null, meRow(),
       h('a', { class: 'nav-item', href: '#/settings', 'data-key': '/settings' }, icon('settings', 18), h('span', { class: 'grow' }, 'Settings'))));
     mark();
   }
@@ -125,7 +137,7 @@ export function createSidebar() {
   }
   const applyCollapsed = () => document.documentElement.classList.toggle('sb-collapsed', !!getSettings().sidebarCollapsed);
   const reload = debounce(load, 120);
-  on('account:changed', render); onModuleChange(() => render());
+  on('account:changed', render); onModuleChange(() => render()); on('user:changed', () => { notes = []; nbs = []; render(); load(); });
   on('notes:changed', reload); on('notebooks:changed', reload);
   on('route:changed', () => { if (current().name === 'notebook') render(); else mark(); });
   load();

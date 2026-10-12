@@ -12,7 +12,12 @@ let account = null;
 export const getConfig = () => config;
 export const getAccount = () => account;
 export const canSystem = () => !!(account && (account.permissions || []).includes('system.read'));
-export const isStaff = () => !!(account && (account.is_staff || account.isStaff));
+let me = null;
+export const getMe = () => me;
+export async function loadMe() { const a = await getMeta('sync:auth', null); me = a?.token ? { ...(a.user || {}) } : null; emit('account:changed', account); return me; }
+export const isStaff = () => !!((account && (account.is_staff || account.isStaff || account.role === 'admin')) || (me && (me.is_staff || me.isStaff || me.role === 'admin' || me.role === 'staff')));
+export const isAuthed = async () => { const a = await getMeta('sync:auth', null); return !!(a?.token && a?.user?.id); };
+export const userName = (u = me) => u?.displayName || u?.display_name || u?.name || (u?.email ? u.email.split('@')[0] : 'You');
 
 async function base() {
   try { const a = await getMeta('sync:auth', null); return (a?.serverUrl || '').replace(/\/$/, ''); } catch { return ''; }
@@ -35,9 +40,10 @@ export async function loadAccount() {
   try {
     const m = await import('../core/sync.js');
     const info = await m.getAccountInfo();
+    loadMe();
     account = info || null;
     await setMeta('accountInfo', account);
-  } catch { /* keep cached */ }
+  } catch (e) { if (e?.status === 401) emit('auth:expired', {}); }
   emit('account:changed', account);
   return account;
 }

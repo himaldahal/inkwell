@@ -16,7 +16,7 @@ export function parse(hash) {
   let name = 'all', params = {};
   const [a, b] = seg;
   if (!a) name = 'all';
-  else if (['all', 'favorites', 'recent', 'archive', 'trash', 'search', 'browse', 'settings', 'shared', 'public', 'admin', 'system', 'study'].includes(a)) name = a;
+  else if (['all', 'favorites', 'recent', 'archive', 'trash', 'search', 'browse', 'settings', 'shared', 'public', 'admin', 'system', 'profile', 'study'].includes(a)) name = a;
   else if (a === 's' && b) { name = 'sharedview'; params = { token: b }; }
   else if (a === 'auth') { name = 'auth'; params = { sub: b || 'login', rest: seg.slice(2) }; }
   else if (a === 'notebook' && b) { name = 'notebook'; params = { id: b }; }

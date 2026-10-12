@@ -46,7 +46,7 @@ export function mountAuth(el, { sub = 'login', query = {}, navigate = (p) => { l
       });
     } },
       h('h2', {}, 'Sign in'),
-      h('p', {}, cfg.mode === 'internal' ? 'Use the account your administrator created for you.' : 'Sign in to sync your notes across devices. Notes work offline without an account.'),
+      h('p', {}, cfg.mode === 'internal' ? 'Use the account your administrator created for you.' : 'Sign in to sync your notes across devices.'),
       l1, l2, needCode ? l3 : null,
       needCode ? h('label', { style: { display: 'flex', gap: '8px', alignItems: 'center' } }, h('input', { type: 'checkbox', checked: remember, onchange: (e) => { remember = e.target.checked; } }), 'Remember this device for 30 days') : null,
       h('details', {}, h('summary', {}, 'Advanced'), l4),
@@ -55,7 +55,7 @@ export function mountAuth(el, { sub = 'login', query = {}, navigate = (p) => { l
       h('div', { class: 'sx-row', style: { justifyContent: 'space-between' } },
         cfg.passwordReset ? link('Forgot password?', '/auth/forgot') : h('span'),
         cfg.registrationOpen ? link('Create account', '/auth/register') : null),
-      h('p', {}, link('Continue without an account', '/')));
+    );
   }
 
   function register() {

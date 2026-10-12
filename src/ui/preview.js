@@ -27,7 +27,7 @@ export function createPreview({ onOpen }) {
       h('div', { class: 'pv-scroll' },
         thumb,
         h('h2', { class: 'pv-title' }, n.title || 'Untitled'),
-        h('p', { class: 'pv-meta' }, `${locked ? 'Locked' : plural((n.pages || []).length, 'page')} - edited ${fmtDate(n.updatedAt)}`, nb ? ` - ${nb.icon || ''} ${nb.name}` : ''),
+        h('p', { class: 'pv-meta' }, `${locked ? 'Locked' : plural((n.pages || []).length, 'page')} - edited ${fmtDate(n.updatedAt)}${n.sharedBy ? ' - owner ' + A.ownerLabel(n) : ''}`, nb ? ` - ${nb.icon || ''} ${nb.name}` : ''),
         (n.tags || []).length ? h('div', { class: 'card-tags' }, n.tags.map((t) => h('a', { class: 'chip', href: '#/tag/' + encodeURIComponent(t) }, '#' + t))) : null,
         !locked && n.textIndex ? h('p', { class: 'pv-text' }, n.textIndex.slice(0, 280)) : null,
         out.length ? h('div', { class: 'pv-sec' }, h('h3', {}, icon('link', 14), 'Links'), h('div', { class: 'pv-links' }, out.map((t) => h('span', { class: 'chip' }, t)))) : null,

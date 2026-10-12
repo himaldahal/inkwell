@@ -14,14 +14,25 @@ import { initInstallPrompt, canInstall, promptInstall } from './ui/install.js';
 import { initAppLock } from './ui/lock.js';
 import * as A from './ui/actions.js';
 import { SHORTCUT_DEFAULTS, comboOf } from './ui/settingsSchema.js';
-import { loadUi, loadConfig, loadAccount } from './ui/config.js';
+import { loadUi, loadConfig, loadAccount, loadMe } from './ui/config.js';
+import { switchUser } from './core/db.js';
 import { isEnabled, onModuleChange } from './core/modules.js';
 
 const LIB_ROUTES = new Set(['shared', 'all', 'favorites', 'recent', 'archive', 'trash', 'notebook', 'tag', 'smart', 'search']);
 
+let authed = false;
+const PUBLIC_ROUTES = new Set(['auth', 'sharedview']);
+const CLEAN = { admin: '/dashboard', system: '/dashboard/system', profile: '/profile' };
+const PATHS = { '/dashboard': '#/admin', '/dashboard/system': '#/system', '/profile': '#/profile', '/login': '#/auth/login', '/register': '#/auth/register' };
+
 async function boot() {
   initInstallPrompt();
-  await loadSettings();
+  // sign-in gate: a cached token + account opens the app (also offline); otherwise only auth and share views are reachable
+  const a0 = await getMeta('sync:auth', null);
+  authed = !!(a0?.token && a0?.user?.id);
+  switchUser(authed ? a0.user.id : null);
+  await loadSettings(); await loadMe();
+  if (PATHS[location.pathname]) history.replaceState(null, '', '/' + PATHS[location.pathname]);
   initToasts();
 
   const sidebar = createSidebar();
@@ -48,6 +59,8 @@ async function boot() {
   // ----- routing -----
   let notePage = null, noteId = null, settingsMounted = null;
   async function apply(r) {
+    if (!authed && !PUBLIC_ROUTES.has(r.name)) return navigate('/auth/login' + (r.path && r.path !== '/' ? '?next=' + encodeURIComponent(r.path) : ''), { replace: true });
+    { const clean = r.name === 'auth' && ['login', 'register'].includes(r.params.sub) ? '/' + r.params.sub : CLEAN[r.name]; if (clean && location.pathname !== clean) history.replaceState(null, '', clean); else if (!clean && location.pathname !== '/' && !/^\/s\//.test(location.pathname)) history.replaceState(null, '', '/' + location.hash); }
     const inNote = r.name === 'note';
     const inAuth = r.name === 'auth' || r.name === 'sharedview';
     authScreen.hidden = !inAuth;
@@ -77,18 +90,17 @@ async function boot() {
     const lib = LIB_ROUTES.has(r.name);
     libPage.hidden = !(lib || inNote || r.name === 'browse');
     setPage.hidden = r.name !== 'settings';
-    adminPage.hidden = r.name !== 'admin' && r.name !== 'system';
+    adminPage.hidden = !['admin', 'system', 'profile'].includes(r.name);
     studyPage.hidden = r.name !== 'study';
     if (r.name === 'study') {
       libPage.hidden = true;
       if (!isEnabled('study')) { toast('Turn on the CA Study Hub under Settings > Modules'); return navigate('/settings', { replace: true }); }
       if (!studyInst) studyInst = (async () => (await import('./study/index.js')).mountStudy(studyPage))();
     }
-    if (r.name === 'admin' || r.name === 'system') {
+    if (['admin', 'system', 'profile'].includes(r.name)) {
       libPage.hidden = true; adminPage.replaceChildren();
-      const sys = r.name === 'system';
-      const m = await loadUi(r.name); const fn = m && (sys ? (m.mountSystem || m.mount || m.default) : (m.mountAdmin || m.mount || m.default));
-      if (fn) fn(adminPage, { navigate }); else adminPage.append(h('div', { class: 'note-state' }, h('h3', {}, r.name === 'system' ? 'System panel is not available' : 'Admin is not available')));
+      const m = await loadUi(r.name); const fn = m && (m['mount' + r.name[0].toUpperCase() + r.name.slice(1)] || m.mount || m.default);
+      if (fn) fn(adminPage, { navigate }); else adminPage.append(h('div', { class: 'note-state' }, h('h3', {}, 'This page is not available yet'), h('a', { class: 'btn', href: '#/' }, 'Back to library')));
     }
     if (lib) library.show(r);
     if (r.name === 'settings' && !settingsMounted) {
@@ -205,16 +217,27 @@ async function boot() {
 
   // ----- start -----
   try { const l = localStorage.getItem('inkwell:last'); if ((!location.hash || location.hash === '#/') && l && /^#\/(note|notebook|tag|smart|favorites|recent|settings)/.test(l)) history.replaceState(null, '', l); } catch { /* ignore */ }
-  loadConfig(); loadAccount();
+  // account lifecycle: sign-in, sign-out, expired token, user switch
+  const toLogin = () => navigate('/auth/login', { replace: true });
+  on('auth:changed', ({ user }) => {
+    authed = !!user; loadMe();
+    if (user) { onboard().catch(() => {}); A.purgeOldTrash().catch(() => {}); import('./core/sync.js').then((m) => m.startSync()).catch(() => {}); }
+    else { import('./core/sync.js').then((m) => m.stopSync()).catch(() => {}); toLogin(); }
+  });
+  on('user:changed', async () => { await loadSettings(); library.reset(); sidebar.reload(); studyInst?.then((i) => i.destroy()); studyInst = null; });
+  const expire = async () => { if (!authed) return; await setMeta('sync:auth', null); authed = false; loadMe(); toast('Please sign in again', { type: 'error' }); toLogin(); };
+  on('auth:expired', expire);
+  on('sync:status', (st) => { if (/signed out by the server/i.test(st?.error || '')) expire(); });
+  loadConfig(); if (authed) loadAccount();
   startRouter();
   setTimeout(() => { const sp = document.getElementById('splash'); sp?.classList.add('out'); setTimeout(() => sp?.remove(), 400); }, 450);
   initAppLock();
-  A.purgeOldTrash().catch(() => {});
-  onboard().catch(() => {});
+  if (authed) A.purgeOldTrash().catch(() => {});
+  if (authed) onboard().catch(() => {});
   const idle = window.requestIdleCallback || ((f) => setTimeout(f, 800));
   idle(async () => {
     try { (await import('./core/pwa.js')).registerPWA(); } catch (e) { console.warn(e); }
-    try { (await import('./core/sync.js')).startSync(); } catch (e) { console.warn('sync unavailable', e); }
+    try { authed && (await import('./core/sync.js')).startSync(); } catch (e) { console.warn('sync unavailable', e); }
   });
 }
 

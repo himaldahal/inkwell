@@ -231,7 +231,7 @@ export function createLibrary() {
     const sb = (ic, t) => h('span', { class: 'sbadge', title: t, 'aria-label': t }, icon(ic, 12));
     const badges = h('span', { class: 'badges' }, n.pinned ? icon('pin', 13) : null, n.favorite ? icon('star', 13) : null, n.lock && !locked ? icon('unlock', 13) : null);
     const shareRow = (si.incoming || si.outgoing || si.public) ? h('div', { class: 'share-badges' },
-      si.incoming ? h('span', { class: 'sb in', title: 'Shared with you' }, icon('link', 11), 'Shared') : null,
+      si.incoming ? h('span', { class: 'sb in', title: 'Shared by ' + A.ownerLabel(n) }, icon('link', 11), 'From ' + A.ownerLabel(n)) : null,
       si.outgoing && !si.incoming ? h('span', { class: 'sb', title: 'You shared this note' }, icon('link', 11), 'Shared') : null,
       si.public ? h('span', { class: 'sb pub', title: 'Public link' }, icon('open', 11), 'Public') : null,
       si.canEdit ? h('span', { class: 'sb' }, icon('edit', 11), 'Can edit') : null, si.viewOnly ? h('span', { class: 'sb' }, 'View only') : null,
@@ -429,6 +429,7 @@ export function createLibrary() {
 
   return {
     el,
+    reset() { cache.clear(); notes = []; items = []; loaded = false; previewId = null; selected.clear(); selecting = false; presence.clear(); gridEl.replaceChildren(); },
     show(r) {
       const changed = r.path !== route.path || !loaded;
       route = r;
