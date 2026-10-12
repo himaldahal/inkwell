@@ -21,7 +21,7 @@ const SKEW_IGNORE_MS = 2000;
 const LOCAL_ONLY = ['dirty', 'blob', 'sharedBy', 'sharedRole', 'sharedOwnerId'];
 
 let started = false, running = null, rerun = false, timer = null, failures = 0, nextAllowed = 0, offsetMs = 0;
-let e2eKey = null, bgDownloading = false, unsubs = [], live = false, cfg = null, lastChange = Date.now();
+let selfId = null, e2eKey = null, bgDownloading = false, unsubs = [], live = false, cfg = null, lastChange = Date.now();
 const failed = new Map();      // "kind:id" -> error text (shown in the queue UI, retried automatically)
 const transfers = new Map();   // asset id -> {dir, loaded, total, ctl}
 let state = { state: 'idle', lastSync: null, pending: 0, error: null, signedIn: false };
@@ -266,10 +266,11 @@ async function pushItems(auth, key, items) {
 }
 
 // ---------- pull / apply ----------
+const isForeign = (r) => !!r.ownerId && (selfId ? r.ownerId !== selfId : !!r.role);
 async function decodeRemote(r, key) {
   let d = r.data || {};
   if (d.enc) {
-    if (r.ownerId) return null; // someone else's encrypted data cannot be read by us
+    if (isForeign(r)) return null; // someone else's encrypted data cannot be read by us
     if (!key) throw new HttpError(0, 'Encrypted data found. Enter your encryption passphrase in Sync settings.', { code: 'needs-passphrase' });
     try { d = await cx.decryptJSON(d.ct, key); }
     catch { throw new HttpError(0, 'Could not decrypt synced data: wrong passphrase?', { code: 'bad-passphrase' }); }
@@ -295,12 +296,12 @@ async function applyRemote(r, key, { fromConflict = false } = {}) {
   const rec = { ...data, id: r.id, updatedAt: r.updatedAt, deleted: !!r.deleted, dirty: 0 };
   for (const k of LOCAL_ONLY) delete rec[k];
   if (!data.blobEnc) delete rec.blobEnc;
-  if (r.ownerId) { rec.sharedOwnerId = r.ownerId; rec.sharedBy = r.owner; rec.sharedRole = r.role === 'editor' ? 'write' : 'read'; }
+  if (isForeign(r)) { rec.sharedOwnerId = r.ownerId; rec.sharedBy = r.owner; rec.sharedRole = r.role === 'editor' ? 'write' : 'read'; }
   else if (local?.sharedOwnerId) { rec.sharedOwnerId = local.sharedOwnerId; rec.sharedBy = local.sharedBy; rec.sharedRole = local.sharedRole; }
   if (kind === 'assets') { if (r.deleted) delete rec.blob; else if (local?.blob) rec.blob = local.blob; }
   await rawPut(kind, rec, { silent: true });
   lastChange = Date.now();
-  if (r.ownerId && !local && kind === 'notes' && !r.deleted && getSetting('notif.inApp') !== false) toast(`${r.owner || 'Someone'} shared "${rec.title || 'Untitled'}" with you`);
+  if (isForeign(r) && !local && kind === 'notes' && !r.deleted && getSetting('notif.inApp') !== false) toast(`${r.owner || 'Someone'} shared "${rec.title || 'Untitled'}" with you`);
   return kind;
 }
 
@@ -436,6 +437,7 @@ const backoffDelay = () => Math.min(5 * 60000, 5000 * 2 ** Math.min(failures, 6)
 async function cycle() {
   const auth = await getAuth();
   if (!auth?.token) { setState({ state: 'idle', error: null, signedIn: false }); await refreshPending(); return; }
+  selfId = auth.user?.id || null;
   setState({ signedIn: true });
   if (!navigator.onLine) { setState({ state: 'offline' }); await refreshPending(); return; }
   if (auth.mustChange) { setState({ state: 'error', error: 'Please change your temporary password to continue syncing.' }); return; }

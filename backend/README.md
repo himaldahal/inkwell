@@ -51,8 +51,11 @@ Analytics (growth, DAU/WAU/MAU, retention cohorts, devices, content and storage,
 ## Pluggable client backend
 See `docs/BACKENDS.md` (adapter contract; `backend.provider` setting; `django` and `none` included).
 
+## Pages and files
+No Django admin: `/admin/` returns 404. Clean SPA paths: `/dashboard/` (staff), `/dashboard/system/` (superuser), `/profile/`, `/login/`, `/register/`. Every data endpoint needs a token; the only unauthenticated reads are public share links (`/s/<token>`, if their visibility allows) and `config`/`health`/`pow`. Pulled records carry `ownerId` (public id of the owner). User files sit under `MEDIA_ROOT/<kind>/<owner public id>/<random name>` and are served only by views (ETag, Range, nosniff, optional `SENDFILE=apache|nginx`). `manage.py check_storage` verifies paths, disk space and orphans.
+
 ## Admin dashboard (token auth, audit-logged): `/api/admin/*`
-overview, users (create/edit/disable/reset/revoke sessions/delete), shares and links, abuse (blocks, lockouts, reports, failed sign-ins), settings, audit (+CSV), health (+ test e-mail), trash tools. UI: `#/admin`. Django admin remains at `/admin/`.
+overview, users (create/edit/disable/reset/revoke sessions/delete), shares and links, abuse (blocks, lockouts, reports, failed sign-ins), settings, audit (+CSV), health (+ test e-mail), trash tools. UI: `#/admin`. 
 
 ## Security notes
 DB-backed rate limits (login per IP+email with exponential lockout, register, forgot/resend, invites, link password attempts, mail caps per recipient/IP/global), honeypot + timing check on sign-up, disposable-domain blocklist, `TRUSTED_PROXIES` for client IPs, HSTS/secure cookies when `DEBUG` is off, CSP without inline scripts (inline script hashes computed from the build), `X-Frame-Options: DENY`, nosniff, `SECRET_KEY` required. Every endpoint is scoped to the authenticated principal; unauthorized and missing resources both return 404. Remaining caveat: app pages still allow inline *styles* (`style-src 'unsafe-inline'`).

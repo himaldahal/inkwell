@@ -2,7 +2,7 @@
 import { h } from '../core/utils.js';
 import { toast } from '../core/store.js';
 import * as sync from '../core/sync.js';
-import { ensureCss, field, bytes, ago, errText, spark, avatarEl } from './sxkit.js';
+import { ensureCss, field, bytes, ago, errText, spark, avatarEl, requireAuth, noAccess } from './sxkit.js';
 
 const A = (path, o) => sync.apiCall('/api/admin' + path, o);
 const post = (path, json) => A(path, { method: 'POST', json });
@@ -180,10 +180,11 @@ export function mountAdmin(el, { navigate = (p) => { location.hash = '#' + p; } 
   root.append(h('div', { class: 'sx-row', style: { justifyContent: 'space-between' } }, h('h2', {}, 'Admin'), h('div', { class: 'sx-row' },
     h('a', { class: 'sx-btn sm', href: '#/system', style: { display: 'none' }, id: 'sx-sys-link' }, 'System panel'), h('button', { class: 'sx-btn sm', onclick: () => navigate('/') }, 'Back to library'))), nav, content);
   (async () => {
+    if (!(await requireAuth(navigate, '/admin'))) return;
     try { const me = await sync.getAccountInfo(); perms = me?.user?.permissions || []; } catch { perms = (await sync.getMe())?.permissions || []; }
     try { roleList = (await sync.apiCall('/api/system/roles')).roles; } catch { roleList = []; }
     const allowed = TABS.filter(([k]) => perms.includes(NEED[k]));
-    if (!allowed.length) { content.replaceChildren(h('div', { class: 'sx-err' }, 'You do not have access to the admin dashboard.')); return; }
+    if (!allowed.length) { el.replaceChildren(noAccess(navigate, 'the admin dashboard')); return; }
     if (!allowed.some(([k]) => k === tab)) tab = allowed[0][0];
     nav.replaceChildren(...allowed.map(([k, l]) => h('button', { type: 'button', role: 'tab', 'data-t': k, 'aria-selected': String(k === tab), onclick: () => tabs(k) }, l)));
     if (perms.includes('system.read')) root.querySelector('#sx-sys-link').style.display = '';

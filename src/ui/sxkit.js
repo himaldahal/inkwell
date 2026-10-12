@@ -1,6 +1,6 @@
 // Shared bits for the account / sharing / admin UIs: themed CSS (uses the app's CSS variables) and tiny helpers.
 import { h } from '../core/utils.js';
-import { avatarUrl, apiCall } from '../core/sync.js';
+import { avatarUrl, apiCall, getAuth as getAuthRecord } from '../core/sync.js';
 
 const CSS = `
 .sx{color:var(--text,#1c1c1e);font:inherit;display:grid;gap:14px;width:100%}.sx *{box-sizing:border-box}
@@ -138,4 +138,23 @@ export function spark(series, color = 'var(--accent,#ff9f0a)') {
   const svg = document.createElementNS(ns, 'svg'); svg.setAttribute('viewBox', `0 0 ${w} ${hh}`); svg.setAttribute('class', 'sx-spark'); svg.setAttribute('preserveAspectRatio', 'none'); svg.setAttribute('role', 'img');
   const pl = document.createElementNS(ns, 'polyline'); pl.setAttribute('points', pts); pl.setAttribute('fill', 'none'); pl.setAttribute('stroke', color); pl.setAttribute('stroke-width', '2'); pl.setAttribute('vector-effect', 'non-scaling-stroke');
   svg.append(pl); return svg;
+}
+
+/** Pages that need an account: sends signed-out visitors to the login screen with a safe ?next=. -> user or null */
+export async function requireAuth(navigate, nextPath) {
+  const a = await getAuthRecord();
+  if (a?.token) return a;
+  navigate('/auth/login?next=' + encodeURIComponent(nextPath));
+  return null;
+}
+export const noAccess = (navigate, what = 'this page') => h('div', { class: 'sx-center' }, h('div', { class: 'sx-card sx-narrow' }, h('h2', {}, 'No access'),
+  h('p', {}, `Your account does not have permission to open ${what}. If you think this is a mistake, ask an administrator.`), h('button', { class: 'sx-btn primary', onclick: () => navigate('/') }, 'Back to my notes')));
+/** Downscale an image file to a 256px square JPEG (<=190 KB) for avatars. */
+export async function shrinkImage(file) {
+  const bmp = await createImageBitmap(file);
+  const s = Math.min(bmp.width, bmp.height), c = document.createElement('canvas');
+  c.width = c.height = 256;
+  c.getContext('2d').drawImage(bmp, (bmp.width - s) / 2, (bmp.height - s) / 2, s, s, 0, 0, 256, 256);
+  for (const q of [0.9, 0.75, 0.6, 0.45]) { const b = await new Promise((r) => c.toBlob(r, 'image/jpeg', q)); if (b && b.size <= 190000) return b; }
+  throw new Error('Image is too detailed; choose another one.');
 }

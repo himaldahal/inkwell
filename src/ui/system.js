@@ -2,7 +2,7 @@
 import { h } from '../core/utils.js';
 import { toast } from '../core/store.js';
 import * as sync from '../core/sync.js';
-import { ensureCss, field, bytes, ago, errText } from './sxkit.js';
+import { ensureCss, field, bytes, ago, errText, requireAuth, noAccess } from './sxkit.js';
 
 const S = (path, o) => sync.apiCall('/api/system' + path, o);
 const NS = 'http://www.w3.org/2000/svg';
@@ -131,7 +131,12 @@ export function mountSystem(el, { navigate = (p) => { location.hash = '#' + p; }
   const range = h('select', { 'aria-label': 'Date range', onchange: (e) => { days = +e.target.value; sessionStorage.setItem('sys-days', days); tabs(tab); } }, [7, 30, 90, 180, 365].map((d) => h('option', { value: d, selected: d === days }, `Last ${d} days`)));
   const auto = h('input', { type: 'checkbox', onchange: (e) => { clearInterval(timer); if (e.target.checked) timer = setInterval(() => { if (document.visibilityState === 'visible' && tab !== 'data') tabs(tab, true); }, 30000); } });
   root.append(h('div', { class: 'sx-row', style: { justifyContent: 'space-between' } }, h('h2', {}, 'System'), h('div', { class: 'sx-row' }, range, h('label', { style: { flexDirection: 'row', display: 'flex', gap: '6px', alignItems: 'center' } }, auto, 'Auto-refresh'), h('button', { class: 'sx-btn sm', onclick: () => navigate('/') }, 'Back'))), nav, content);
-  tabs(tab);
+  (async () => {
+    if (!(await requireAuth(navigate, '/system'))) return;
+    let perms = []; try { perms = (await sync.getAccountInfo())?.user?.permissions || []; } catch { perms = (await sync.getMe())?.permissions || []; }
+    if (!perms.includes('system.read') && !perms.includes('analytics.read')) { el.replaceChildren(noAccess(navigate, 'the system panel')); return; }
+    tabs(tab);
+  })();
   return { destroy() { clearInterval(timer); root.remove(); } };
 }
 export default mountSystem;

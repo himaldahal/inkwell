@@ -13,7 +13,8 @@
 5. Terminal (inside the app's virtualenv, in the app folder):
    ```
    python manage.py migrate
-   python manage.py collectstatic --noinput     # admin assets only
+   python manage.py check_storage               # paths exist and are writable, free disk, orphaned files
+   python manage.py collectstatic --noinput     # fills STATIC_ROOT (served by WhiteNoise at /static/); the app itself is served from inkwell/static_app
    python manage.py create_admin --email you@example.com --password '...'   # first administrator (or createsuperuser)
    ```
 6. Click **Restart**. Open the site; sign in with the superuser (internal mode: create other users under `#/admin`).
@@ -31,6 +32,19 @@
 
 ### MySQL (optional)
 Create a database and user in cPanel, set `DB_ENGINE=mysql DB_NAME DB_USER DB_PASSWORD DB_HOST`, and `pip install mysqlclient` (or the pure-Python `PyMySQL`), then `migrate`.
+
+## URLs, static files and media
+- There is **no Django admin**. Staff use the in-app dashboard at `/dashboard/`, superusers `/dashboard/system/`, everyone `/profile/`; `/login/` and `/register/` open the sign-in screens. Django serves `index.html` for these paths (the service worker stays scoped to `/`); the API returns 403 for people without permission and the app shows a friendly "no access" page; signed-out visitors are sent to login with a safe `next`.
+- `STATIC_URL=/static/`, `STATIC_ROOT=backend/staticfiles` (env `STATIC_ROOT`), compressed manifest storage in production.
+- **User files** (attachments, avatars, public-share snapshots) live under `MEDIA_ROOT` in per-owner folders with random file names and are **never** served by URL or WhiteNoise, only by permission-checked views. Put `MEDIA_ROOT` outside the web root, e.g. `/home/USER/inkwell-data/media` (folder mode 700). Optional offload: `SENDFILE=apache` (mod_xsendfile) or `SENDFILE=nginx` plus `SENDFILE_URL_PREFIX=/protected-media/` mapped to an internal location.
+- `.htaccess` safety net if anything sits under the web root:
+  ```
+  <FilesMatch "\.(sqlite3?|db|env|log|py|pyc)$">
+    Require all denied
+  </FilesMatch>
+  RedirectMatch 404 ^/(media|data)/
+  ```
+- Backups: copy the database file (`DB_PATH`, or mysqldump) and `MEDIA_ROOT` together (cPanel Backup Wizard or a nightly `rsync`). `python manage.py check_storage [--delete-orphans]` reports missing and orphaned files.
 
 ## E-mail (needed for commercial mode: verification, password reset, share notices)
 Create a mailbox in cPanel > Email Accounts, then set:
