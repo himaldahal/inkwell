@@ -82,6 +82,24 @@ function showToast({ message, type, kind, action, duration }) {
   timer = setTimeout(remove, duration || (action ? 6000 : 3500));
 }
 
+/** drag-to-dismiss for bottom sheets: drag down from the top 56px (or the handle) */
+export function dragDismiss(el, close, handleOnly = false) {
+  let y0 = null, dy = 0, t0 = 0;
+  el.addEventListener('pointerdown', (e) => {
+    if (!isNarrow() || e.pointerType === 'mouse') return;
+    const r = el.getBoundingClientRect();
+    if (e.clientY - r.top > 56 || (handleOnly && e.target.closest('button, input'))) return;
+    y0 = e.clientY; dy = 0; t0 = Date.now(); el.classList.add('sheet-dragging'); el.setPointerCapture?.(e.pointerId);
+  });
+  el.addEventListener('pointermove', (e) => { if (y0 == null) return; dy = Math.max(0, e.clientY - y0); el.style.transform = `translateY(${dy}px)`; });
+  const end = () => {
+    if (y0 == null) return; const fast = dy / Math.max(1, Date.now() - t0) > 0.6; y0 = null;
+    el.classList.remove('sheet-dragging'); el.classList.add('sheet-drag');
+    if (dy > 110 || (fast && dy > 30)) { el.style.transform = 'translateY(110%)'; setTimeout(close, 150); } else el.style.transform = '';
+  };
+  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
+}
+
 // ---------- modal / sheet ----------
 const FOCUSABLE = 'button:not([disabled]),[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 export function openModal({ title, body, actions = [], size = 'md', onClose, hideHead = false, className = '' }) {
@@ -124,6 +142,7 @@ export function openModal({ title, body, actions = [], size = 'md', onClose, hid
   backdrop.addEventListener('pointerdown', (e) => { if (e.target === backdrop) close(); });
   backdrop.append(dlg);
   overlayRoot().append(backdrop);
+  dragDismiss(dlg, () => close());
   document.addEventListener('keydown', onKey, true);
   requestAnimationFrame(() => { (dlg.querySelector('[autofocus],input,textarea') || dlg).focus({ preventScroll: true }); });
   return { ...ctx, closed: closedP, get result() { return result; } };
@@ -180,6 +199,7 @@ export function openMenu(items, { x = 0, y = 0, anchor, title } = {}) {
   }
   backdrop.append(menu);
   overlayRoot().append(backdrop);
+  if (narrow) dragDismiss(menu, close);
   if (!narrow) {
     const r = anchor?.getBoundingClientRect?.();
     let px = r ? r.right : x, py = r ? r.bottom + 4 : y;

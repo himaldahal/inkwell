@@ -267,6 +267,15 @@ export function createLibrary() {
           h('div', { class: 'stat' }, h('span', { class: 'stat-ic' }, icon('file', 18)), h('div', {}, h('b', {}, st.notes), h('small', {}, 'notes'))),
           h('div', { class: 'stat' }, h('span', { class: 'stat-ic' }, icon('edit', 18)), h('div', {}, h('b', {}, st.week), h('small', {}, 'edited this week'))),
           h('button', { class: 'stat daily', type: 'button', onclick: async () => { const n = await A.openDailyNote(); navigate('/note/' + encodeURIComponent(n.id)); } }, h('span', { class: 'stat-ic' }, icon('calendar', 18)), h('div', {}, h('b', {}, 'Today'), h('small', {}, 'Open daily note')))));
+        let opened = []; try { opened = JSON.parse(localStorage.getItem('inkwell:opened') || '[]'); } catch { /* ignore */ }
+        const byId = new Map(notes.map((n) => [n.id, n]));
+        const row = [...new Set([...opened.filter((i) => byId.has(i)), ...[...notes].sort((a, b) => b.updatedAt - a.updatedAt).map((n) => n.id)])].slice(0, 8).map((i) => byId.get(i));
+        if (row.length > 1 || (row.length === 1 && notes.length > 3)) top.append(h('div', { class: 'shelf-wrap' }, h('h2', {}, 'Continue where you left off'), h('div', { class: 'shelf' }, row.map((n, i) => {
+          const lk = isNoteLocked(n);
+          return h('button', { class: 'mini' + (i === 0 ? ' first' : ''), type: 'button', 'aria-label': 'Open ' + (n.title || 'Untitled'), onclick: (e) => { e.currentTarget.querySelector('.thumb').style.viewTransitionName = 'note-zoom'; openNote(n.id); } },
+            h('div', { class: 'thumb' }, n.preview && !lk ? h('img', { src: n.preview, alt: '', loading: 'lazy' }) : paperEl(n.template, n.paperColor)),
+            i === 0 ? h('span', { class: 'first-tag' }, 'Last opened') : null, h('span', { class: 'ellipsis' }, n.title || 'Untitled'));
+        }))));
         if (!getSettings().tipsDismissed && st.notes < 6) {
           const tip = TIPS[st.notes % TIPS.length];
           top.append(h('div', { class: 'tip' }, icon('zap', 18), h('div', { class: 'grow' }, h('b', {}, tip[0]), h('span', {}, ' ' + tip[1])), iconBtn('x', 'Dismiss tips', () => { updateSettings({ tipsDismissed: true }); paintTop(); }, { size: 16, class: 'sm' })));
@@ -331,6 +340,7 @@ export function createLibrary() {
   async function openNote(id) {
     const n = notes.find((x) => x.id === id) || (await import('../core/db.js').then((m) => m.getRecord('notes', id)));
     if (n && !(await requireUnlock(n))) return;
+    document.querySelector(`.card[data-id="${CSS.escape(id)}"] .thumb`)?.style.setProperty('view-transition-name', 'note-zoom');
     navigate('/note/' + encodeURIComponent(id));
   }
   const markPreview = () => gridEl.querySelectorAll('.card').forEach((c) => c.classList.toggle('previewing', c.dataset.id === previewId));

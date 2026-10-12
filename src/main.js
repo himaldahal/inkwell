@@ -88,6 +88,11 @@ async function boot() {
     tabbar.querySelectorAll('.tab').forEach((t) => { const on_ = t.dataset.tab === key; t.classList.toggle('active', on_); on_ ? t.setAttribute('aria-current', 'page') : t.removeAttribute('aria-current'); });
     const label = { settings: 'Settings', browse: 'Notebooks', note: 'Note' }[r.name] || 'Library';
     announcer.textContent = label;
+    try {
+      if (r.name !== 'auth' && r.name !== 'sharedview') localStorage.setItem('inkwell:last', location.hash);
+      if (inNote) { const o = JSON.parse(localStorage.getItem('inkwell:opened') || '[]').filter((i) => i !== r.params.id); o.unshift(r.params.id); localStorage.setItem('inkwell:opened', JSON.stringify(o.slice(0, 12))); }
+    } catch { /* storage unavailable */ }
+    if (!inNote) document.querySelectorAll('.thumb').forEach((t) => t.style.removeProperty('view-transition-name'));
     if (!inNote) document.title = (label === 'Library' ? 'Inkwell' : label + ' - Inkwell');
   }
   on('route:changed', (r) => {

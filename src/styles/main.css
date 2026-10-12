@@ -450,3 +450,27 @@ body { font-feature-settings: "cv11", "ss01"; letter-spacing: -.006em; }
   .selbar { bottom: calc(var(--tab-h) + var(--sab) + 12px); top: auto; padding: 6px; width: calc(100% - 20px); justify-content: center; }
   .selbar .sel-actions { width: 100%; }
 }
+
+/* ---------- native feel ---------- */
+html { touch-action: manipulation; }
+body { overscroll-behavior: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+input, textarea, [contenteditable], .selectable, .editor-host [contenteditable] { -webkit-user-select: text; user-select: text; -webkit-touch-callout: default; }
+img { -webkit-user-drag: none; }
+.btn:active, .icon-btn:active, .nav-item:active, .menu-item:active, .pick-row:active, .stat.daily:active { transform: scale(.96); background: var(--surface-3); }
+.sheet-drag { transition: transform .3s var(--spring); } .sheet-dragging { transition: none !important; }
+@media (display-mode: window-controls-overlay) {
+  .sidebar, .lib { padding-top: env(titlebar-area-height, 0px); }
+  .sb-head, .lib-head { -webkit-app-region: drag; app-region: drag; min-height: env(titlebar-area-height, 40px); }
+  .sb-head > *, .lib-head button, .lib-head input, .lib-head .search-box, .lib-head a { -webkit-app-region: no-drag; app-region: no-drag; }
+}
+.note-screen { view-transition-name: note-zoom; }
+:not(.in-note) .note-screen { view-transition-name: none; }
+::view-transition-group(note-zoom) { animation-duration: .42s; animation-timing-function: var(--ease); }
+.shelf-wrap { display: flex; flex-direction: column; gap: 6px; }
+.shelf-wrap h2 { margin: 6px 0 0; font: 700 .78rem var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.shelf { display: flex; gap: 12px; overflow-x: auto; padding: 2px 2px 8px; scroll-snap-type: x proximity; scrollbar-width: none; }
+.mini { flex: none; width: 108px; scroll-snap-align: start; display: flex; flex-direction: column; gap: 6px; border: 0; background: none; padding: 0; text-align: left; cursor: pointer; }
+.mini.first { width: 128px; }
+.mini .thumb { position: relative; aspect-ratio: 4 / 5; border-radius: 14px; overflow: hidden; border: 1px solid var(--border); box-shadow: var(--shadow-1); background: #fff; transition: transform .3s var(--spring); }
+.mini:active .thumb { transform: scale(.96); } .mini .thumb img { width: 100%; height: 100%; object-fit: cover; object-position: top; }
+.mini span { font-size: .8rem; font-weight: 600; } .mini .first-tag { color: var(--accent); font-size: .68rem; text-transform: uppercase; letter-spacing: .05em; }
