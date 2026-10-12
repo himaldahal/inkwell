@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Inkwell - offline</title>
+<style>
+:root{color-scheme:light dark;--bg:#f6f3ee;--text:#1f1d2b;--muted:#6b6880;--accent:#4f46e5}
+@media (prefers-color-scheme:dark){:root{--bg:#14131c;--text:#ecebf5;--muted:#9a98b0;--accent:#818cf8}}
+body{margin:0;min-height:100dvh;display:grid;place-items:center;background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;text-align:center;padding:24px}
+img{width:88px;height:88px;border-radius:22px}h1{margin:16px 0 4px;font-size:1.4rem}p{color:var(--muted);max-width:32ch;margin:0 auto 20px}
+button{background:var(--accent);color:#fff;border:0;border-radius:10px;padding:10px 18px;font:inherit;cursor:pointer}
+</style></head><body><main>
+<img src="/icons/icon-192.png" alt="">
+<h1>You're offline</h1>
+<p>Inkwell could not load this page. Your notes are safe on this device. Reconnect and try again.</p>
+<button onclick="location.href='/'">Try again</button>
+</main></body></html>
