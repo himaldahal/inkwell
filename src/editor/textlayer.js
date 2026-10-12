@@ -2,7 +2,7 @@
 import { h } from '../core/utils.js';
 import { icon } from './icons.js';
 
-export function mountTextLayer(host, note, { onChange }) {
+export function mountTextLayer(host, note, { onChange, hooks = {} }) {
   const ed = h('div', { class: 'ik-rich', contenteditable: 'true', spellcheck: 'true', 'data-ph': 'Start typing your notes... use the toolbar for headings, lists and checklists.', role: 'textbox', 'aria-multiline': 'true', 'aria-label': 'Typed notes' });
   ed.innerHTML = note.text || '';
   const exec = (c, v) => { ed.focus(); document.execCommand(c, false, v); sync(); };
@@ -58,7 +58,11 @@ export function mountTextLayer(host, note, { onChange }) {
     mk('olist', 'Numbered list', () => exec('insertOrderedList'), () => document.queryCommandState('insertOrderedList')),
     mk('checklist', 'Checklist', toggleCheck, () => { const n = getSelection().anchorNode; return !!(n?.nodeType === 3 ? n.parentElement : n)?.closest?.('ul.ik-check'); }),
     mk('link', 'Link', link),
-    mk('search', 'Find', toggleFind));
+    mk('search', 'Find', toggleFind),
+    h('span', { class: 'ik-vsep' }),
+    mk('wand', 'Transform text', (e) => hooks.transform?.(e.currentTarget, ed)),
+    mk('volume', 'Read aloud', (e) => hooks.read?.(e.currentTarget, ed)),
+    mk('mic', 'Dictate', (e) => hooks.dictate?.(e.currentTarget, ed)));
   function refresh() { for (const [b, st] of btns) { let on = false; try { on = !!st?.(); } catch { /* ignore */ } b.classList.toggle('on', on); } }
 
   ed.addEventListener('input', sync);

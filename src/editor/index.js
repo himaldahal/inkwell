@@ -146,7 +146,12 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
 
     // ---------- text layer ----------
     let textOpT;
-    const textLayer = mountTextLayer(textHost, note, { onChange: () => {
+    const hooks = {
+      transform: (a, root) => import('./transform.js').then((m) => m.textMenu(a, root, () => { note.text = root.innerHTML; dirty = true; save(); })),
+      read: (a, root) => voiceRead(a, root),
+      dictate: (b, root) => import('./voice.js').then((m) => m.toggleDictation(() => root, (on) => b.classList.toggle('rec', on))),
+    };
+    const textLayer = mountTextLayer(textHost, note, { hooks, onChange: () => {
       dirty = true; save();
       if (opCbs.size) { clearTimeout(textOpT); textOpT = setTimeout(() => opCbs.forEach((cb) => cb([{ type: 'text', pageId: null, data: note.text }])), 400); }
     } });
@@ -221,6 +226,8 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       toggleRuler: () => { ruler.toggle(); tb.refresh(); },
       toggleOptions: () => root.classList.toggle('ik-opt-open'),
       sticky: (c) => engine.insertSticky(c),
+      read: (a) => voiceRead(a, null),
+      dictate: (b) => import('./voice.js').then((m) => m.toggleDictation(() => { if (!engine.editing) { const pv = engine.currentPv(), c = engine.visibleCenter(pv); engine.insertTextBox(pv, c.x - 140, c.y - 20); } return engine.editing?.t; }, (on) => b.classList.toggle('rec', on))),
       textColor: (c) => { const ed = engine.editing; if (!ed) return; const sel = getSelection(); if (sel && !sel.isCollapsed && ed.t.contains(sel.anchorNode)) engine.fmt('foreColor', c); else ed.t.style.color = c; },
       textSize: (v) => { if (engine.editing) engine.editing.t.style.fontSize = v + 'px'; },
     });
@@ -378,6 +385,19 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       ], { align: 'end' });
     }
 
+    // ---------- read aloud ----------
+    function pageText(i) { return note.pages[i].items.filter((x) => !x.deleted && x.type === 'text').map((x) => x.text || stripHtml(x.html || '')).join('. '); }
+    function voiceRead(anchor, root) {
+      import('./voice.js').then((m) => {
+        const startPage = () => {
+          let i = engine.cur;
+          const next = () => { while (i < note.pages.length && !pageText(i).trim()) i++; if (i >= note.pages.length) return; engine.goToPage(i); const t = pageText(i); i++; m.speak(t, { onEnd: next }); };
+          next();
+        };
+        const start = () => (root && (view !== 'ink') ? m.speak(root) : startPage());
+        m.readControls(anchor, { start, onStop: () => {} }); start();
+      });
+    }
     // ---------- audio ----------
     let recTick = null;
     function refreshRecUI() {

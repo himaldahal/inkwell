@@ -260,3 +260,5 @@
 .ik-radial button:hover, .ik-radial button.hot { background: var(--ik-accent); color: #fff; }
 .ik-sticky { position: relative; }
 .ik-handle.rot { left: 50%; top: -28px; cursor: grab; background: var(--ik-accent); }
+::highlight(ik-read) { background: color-mix(in srgb, var(--accent, #ff9f0a) 45%, transparent); color: inherit; }
+.ik-interim { color: var(--ik-muted); font-style: italic; }

@@ -2,6 +2,7 @@
 import { h } from '../core/utils.js';
 import { icon } from './icons.js';
 import { ibtn, pref, popover } from './ui.js';
+import { toast } from '../core/store.js';
 import { drawStroke } from './stroke.js';
 import { BRUSHES, FONTS } from './brushes.js';
 import { SHAPES } from './shapes.js';
@@ -12,7 +13,9 @@ const HL_PALETTE = ['#fde047', '#86efac', '#7dd3fc', '#f9a8d4', '#fdba74', '#c4b
 const RANGE = { pen: [0.5, 24, 0.5], highlighter: [6, 50, 1], pencil: [0.5, 12, 0.5], shape: [0.5, 20, 0.5], eraser: [4, 60, 1] };
 const EMOJI = '😀 😂 😍 🤔 😎 😴 👍 👎 👏 🙏 💡 ⭐ ✅ ❌ ❗ ❓ 🔥 💯 🎯 📌 📎 📝 📚 🧠 ❤️ 💙 🟡 🟢 🔴 ➡️ ⬆️ ⚠️ 🎉 ☕ 🕐 📅 🔍 💬 🚀'.split(' ');
 
+const fontLib = { extra: [], recent: () => pref.get('recentfonts', []), note(f) { pref.set('recentfonts', [f, ...fontLib.recent().filter((x) => x !== f)].slice(0, 5)); } };
 export function buildToolbar(engine, act) {
+  import('./fonts.js').then(async (m) => { const l = await m.loadSavedFonts(); fontLib.extra = l.map((f) => [f, m.fontStack(f)]); if (engine.tool === 'text') render(); }).catch(() => {});
   const TOOLS = [
     ['pen', 'Pen (P)'], ['highlighter', 'Highlighter (H)'], ['pencil', 'Pencil (N)'], ['eraser', 'Eraser (E)'], ['select', 'Lasso select (V)'],
     ['shape', 'Shapes (S)'], ['text', 'Text box (T)'], ['image', 'Insert image (I)', 'action'], ['sticker', 'Stickers', 'action'],
@@ -102,6 +105,7 @@ export function buildToolbar(engine, act) {
     const f = (cmd, ic, label, txt) => { const b = ibtn(null, label, () => engine.fmt(cmd), 'sm'); if (txt) b.append(h('b', {}, txt)); else b.append(icon(ic, 18)); return b; };
     return h('div', { class: 'ik-textfmt' },
       f('bold', null, 'Bold', 'B'), f('italic', null, 'Italic', 'I'), f('underline', null, 'Underline', 'U'), f('strikeThrough', null, 'Strikethrough', 'S'),
+      ibtn('volume', 'Read aloud', (e, b) => act.read(b), 'sm'), ibtn('mic', 'Dictate', (e, b) => act.dictate(b), 'sm'),
       f('insertUnorderedList', 'list', 'Bulleted list'), f('insertOrderedList', 'olist', 'Numbered list'), hiBtn(), f('justifyLeft', 'doc', 'Align left'), f('justifyCenter', null, 'Align center', '≡'), f('justifyRight', null, 'Align right', '▤'));
   }
   function render() {
@@ -147,10 +151,18 @@ export function buildToolbar(engine, act) {
       for (const [m, n] of [['stroke', 'Stroke'], ['pixel', 'Pixel']]) seg.append(h('button', { type: 'button', class: 'ik-segb' + (c.mode === m ? ' on' : ''), onclick: () => engine.set('eraser', { mode: m }) }, n));
       opts.append(seg, sizeRow('eraser', c));
     } else if (tool === 'text') {
-      const fs = h('select', { class: 'ik-ref-sel', 'aria-label': 'Font', style: { flex: 'none', width: 'auto' } }, ...FONTS.map(([n, f]) => h('option', { value: f }, n)));
+      const fs = h('select', { class: 'ik-ref-sel', 'aria-label': 'Font', style: { flex: 'none', width: 'auto', fontFamily: c.font || '' } });
+      const rec = fontLib.recent();
+      if (rec.length) fs.append(h('optgroup', { label: 'Recent' }, ...rec.map((f) => h('option', { value: f }, f.split(',')[0].replace(/"/g, '')))));
+      fs.append(h('optgroup', { label: 'Fonts' }, ...[...FONTS, ...fontLib.extra].map(([n, f]) => h('option', { value: f, style: { fontFamily: f } }, n))));
       fs.value = c.font || FONTS[0][1];
-      fs.addEventListener('change', () => { engine.set('text', { font: fs.value }); if (engine.editing) engine.editing.t.style.fontFamily = fs.value; });
-      opts.append(textRow(), fs, colorRow('text', c), sizeRow('text', c));
+      fs.addEventListener('change', () => { engine.set('text', { font: fs.value }); fontLib.note(fs.value); if (engine.editing) engine.editing.t.style.fontFamily = fs.value; });
+      const fi = h('input', { type: 'file', accept: '.ttf,.otf,.woff,.woff2', hidden: true });
+      fi.addEventListener('change', async () => { const f = fi.files[0]; if (!f) return; const m = await import('./fonts.js'); const fam = await m.importFont(f); fontLib.extra.push([fam, m.fontStack(fam)]); engine.set('text', { font: m.fontStack(fam) }); render(); });
+      const importBtn = ibtn(null, 'Import font file', () => fi.click(), 'sm'); importBtn.append(h('b', {}, 'Aa+'));
+      const sysBtn = window.queryLocalFonts ? ibtn(null, 'Use system fonts', async () => { const m = await import('./fonts.js'); const l = await m.localFonts(); if (l?.length) { fontLib.extra.push(...l.slice(0, 400).map((n) => [n, m.fontStack(n)])); render(); } else toast('No system fonts available'); }, 'sm') : null;
+      sysBtn?.append(h('b', {}, 'Sys'));
+      opts.append(textRow(), fs, importBtn, sysBtn, fi, colorRow('text', c), sizeRow('text', c));
     } else if (tool === 'select') {
       opts.append(h('span', { class: 'ik-hint' }, 'Draw a loop to select strokes and objects, or tap one. Drag to move, corners to resize.'));
     } else if (tool === 'laser') {
