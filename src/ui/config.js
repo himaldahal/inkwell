@@ -3,7 +3,7 @@ import { emit, on } from '../core/store.js';
 
 /* Lazy loaders for optional UI modules owned by the sync/accounts side. import.meta.glob only
    lists files that exist, so missing modules are simply absent instead of breaking the build. */
-const mods = import.meta.glob('./{auth,admin,share,shareView}.js');
+const mods = import.meta.glob('./{auth,admin,system,share,shareView}.js');
 export const hasUi = (name) => !!mods[`./${name}.js`];
 export const loadUi = async (name) => (mods[`./${name}.js`] ? mods[`./${name}.js`]() : null);
 
@@ -11,6 +11,7 @@ let config = { mode: 'internal', registrationOpen: true };
 let account = null;
 export const getConfig = () => config;
 export const getAccount = () => account;
+export const canSystem = () => !!(account && (account.permissions || []).includes('system.read'));
 export const isStaff = () => !!(account && (account.is_staff || account.isStaff));
 
 async function base() {

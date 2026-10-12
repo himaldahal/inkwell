@@ -77,17 +77,18 @@ async function boot() {
     const lib = LIB_ROUTES.has(r.name);
     libPage.hidden = !(lib || inNote || r.name === 'browse');
     setPage.hidden = r.name !== 'settings';
-    adminPage.hidden = r.name !== 'admin';
+    adminPage.hidden = r.name !== 'admin' && r.name !== 'system';
     studyPage.hidden = r.name !== 'study';
     if (r.name === 'study') {
       libPage.hidden = true;
       if (!isEnabled('study')) { toast('Turn on the CA Study Hub under Settings > Modules'); return navigate('/settings', { replace: true }); }
       if (!studyInst) studyInst = (async () => (await import('./study/index.js')).mountStudy(studyPage))();
     }
-    if (r.name === 'admin') {
+    if (r.name === 'admin' || r.name === 'system') {
       libPage.hidden = true; adminPage.replaceChildren();
-      const m = await loadUi('admin'); const fn = m && (m.mountAdmin || m.mount || m.default);
-      if (fn) fn(adminPage, { navigate }); else adminPage.append(h('div', { class: 'note-state' }, h('h3', {}, 'Admin is not available')));
+      const sys = r.name === 'system';
+      const m = await loadUi(r.name); const fn = m && (sys ? (m.mountSystem || m.mount || m.default) : (m.mountAdmin || m.mount || m.default));
+      if (fn) fn(adminPage, { navigate }); else adminPage.append(h('div', { class: 'note-state' }, h('h3', {}, r.name === 'system' ? 'System panel is not available' : 'Admin is not available')));
     }
     if (lib) library.show(r);
     if (r.name === 'settings' && !settingsMounted) {
