@@ -11,7 +11,7 @@ Installable PWA · Django backend · cloud sync · sharing · live collaboration
 </p>
 
 ## Contents
-[Overview](#overview) · [Screenshots](#screenshots) · [Features](#features) · [Architecture](#architecture) · [Quick start](#quick-start) · [Deployment modes](#deployment-modes) · [Configuration](#configuration) · [Deploying to shared hosting](#deploying-to-shared-hosting) · [Security](#security) · [Sync & offline](#sync--offline) · [Sharing & collaboration](#sharing--collaboration) · [Admin dashboard](#admin-dashboard) · [Project layout](#project-layout) · [Status & limitations](#status--limitations) · [License](#license)
+[Overview](#overview) · [Screenshots](#screenshots) · [Features](#features) · [Architecture](#architecture) · [Quick start](#quick-start) · [Deployment modes](#deployment-modes) · [Configuration](#configuration) · [Deploying to shared hosting](#deploying-to-shared-hosting) · [Modularity](#modularity) · [Security](#security) · [Sync & offline](#sync--offline) · [Sharing & collaboration](#sharing--collaboration) · [Admin dashboard](#admin-dashboard) · [Project layout](#project-layout) · [Status & limitations](#status--limitations) · [License](#license)
 
 ## Overview
 Inkwell is a note-taking app in the spirit of Notability-style apps: write with a stylus or finger, type, annotate PDFs, record audio and organise everything in subjects and tags. Notes are saved **on the device first**, so the app is fully usable offline. When you are signed in, changes sync to your own server in the background and across all your devices.
@@ -37,6 +37,10 @@ Inkwell is a note-taking app in the spirit of Notability-style apps: write with 
 |---|---|---|
 | <img src="docs/screenshots/login-light.png" width="280"> | <img src="docs/screenshots/login-show-password-dark.png" width="280"> | <img src="docs/screenshots/admin-dashboard-light.png" width="280"> |
 
+| System panel (superuser) | CA Study Hub |
+|---|---|
+| <img src="docs/screenshots/system-analytics-light.png" width="420"> | <img src="docs/screenshots/study-hub-light.png" width="420"> |
+
 ## Features
 **Writing**
 - Pressure-sensitive ink with palm rejection, smoothing, undo/redo, zoom and pan.
@@ -44,6 +48,12 @@ Inkwell is a note-taking app in the spirit of Notability-style apps: write with 
 - Typed-notes view (rich text), split view, multiple pages, page templates (lined, grid, dot, Cornell, planner, to-do and more).
 - Read-aloud (text-to-speech) and dictation where the browser supports them; system and imported fonts.
 - PDF import and annotation, audio recording synced to handwriting.
+- Free drawing: infinite-style pages, hand-drawn (sketch) shapes with hachure/cross-hatch fills, connectors that follow shapes, frames, reusable element library.
+- Page and note background colours, gradients and pattern tints.
+- Auto-generated table of contents from headings and page titles, outline pane with drag reorder.
+- Embeds (YouTube, Vimeo, Google Docs/Slides/Sheets, Loom, Figma, Maps, links) as click-to-load, sandboxed frames.
+- Optional lightweight OCR (Tesseract, loaded on demand) so handwriting and scanned PDFs become searchable.
+- Previews that show the real page content (ink, PDF, typed text).
 
 **Organising**
 - Nested subjects (notebooks), tags, favourites, pins, archive, trash with 60-day auto-delete and restore.
@@ -54,11 +64,14 @@ Inkwell is a note-taking app in the spirit of Notability-style apps: write with 
 - Installable, standalone, native-feeling gestures, light/dark/sepia themes, accent colours, many customisable settings (appearance, editor, voice, sync, privacy, accessibility).
 - Layouts for phone (tab bar), tablet (sidebar + grid) and desktop (three panes, keyboard shortcuts).
 
+**CA Study Hub** (module, on by default): subject and chapter tracker with progress, exam countdown, planner and daily targets, focus timer with study-hour charts, spaced-repetition revision, flashcards, quick-reference cards, mistake log, mock-test tracker, ruled/ledger/journal/T-account paper templates, small calculators (depreciation, ratios, EMI, GST/TDS, break-even and more) and an exam mode. It ships structure only, no copyrighted syllabus text. Its data is stored on the device and is not synced yet.
+
 **Accounts & collaboration**
 - E-mail login, optional TOTP two-factor, device/session list, profile (name and avatar; the e-mail cannot be changed by the user).
 - Share with people (read or write) or publish a public link, each optionally password protected and expiring.
 - Presence ("who is here and what are they doing") and an activity timeline per note.
-- Custom admin dashboard (users, devices, shares, abuse, mail, storage, audit log).
+- Custom admin dashboard (users, devices, shares, abuse, mail, storage, audit log) and a separate superuser **system panel** with analytics charts, sync/API metrics, server info, role editor and a read-only data viewer.
+- Role-based access control (superuser, admin, support, analyst, user, plus custom roles); deny by default on every admin/system endpoint.
 
 ## Architecture
 ```
@@ -161,6 +174,17 @@ Full guide: [`DEPLOY.md`](DEPLOY.md). In short, with cPanel "Setup Python App" (
 3. Set the environment variables (at minimum `SECRET_KEY`, `ALLOWED_HOSTS`, `APP_URL`, `DEBUG=false`), then run `python manage.py migrate` and `python manage.py create_admin`.
 4. Serve over HTTPS (required for service workers, installability and the proof-of-work check).
 
+## Modularity
+Everything optional is a module you can switch on or off under **Settings → Modules**: PDF, audio, OCR, read-aloud, dictation, embeds, sketch board, table of contents, collaboration, live calls, end-to-end encryption, CA Study Hub and extra fonts. Disabled modules are not loaded and their UI disappears (`src/core/modules.js`, `registerModule()` lets you add your own).
+
+Backends are replaceable too:
+- **Sync backend:** `src/core/sync.js` talks only to a backend adapter (`src/core/backend.js`). The Django adapter is the default; a local-only (`none`) adapter is included, and you can register your own (Supabase, Firebase, WebDAV, custom REST). See [`docs/BACKENDS.md`](docs/BACKENDS.md).
+- **OCR engine:** register a provider with `registerOcrProvider()` (Tesseract, remote HTTP and none are included). See [`docs/OCR.md`](docs/OCR.md).
+- **Embeds:** allowed hosts are configurable (`EMBED_HOSTS`, see [`docs/EMBEDS.md`](docs/EMBEDS.md)).
+
+## Trash
+Deleted notes and notebooks go to Trash and are removed automatically after **60 days** (`TRASH_RETENTION_DAYS`). Users can also delete permanently at any time (single item, selection or "Empty trash"), which also removes the stored files. Expired items are purged lazily by the server; `python manage.py purge_trash` can run from cron as well.
+
 ## Security
 - E-mail-only login; Django password hashing and validators; optional TOTP 2FA with recovery codes; hashed, expiring, rotating API tokens; device list with revoke.
 - No ID enumeration: every query is scoped to the signed-in user, unauthorised and missing resources look identical, record ids are namespaced per owner, share tokens are random and stored hashed, responses to sign-in/reset/invites do not reveal whether an account exists.
@@ -193,12 +217,14 @@ ARCHITECTURE.md data model and module contracts
 ```
 
 ## Status & limitations
-Inkwell is under active development. Be aware of the following:
-- Some features have been exercised only lightly (for example PDF export output, audio recording, voice features, touch gestures, font import, and the offline-PDF flow); expect rough edges.
-- Planned but not built yet: layers, infinite canvas, protractor/compass tools, function plotter, table cell editing, bookmarks/outline, image crop, handwriting search (OCR).
+Inkwell is under active development. Most features were exercised once in a headless browser, but not with real devices, so expect rough edges:
+- Lightly tested or untested: PDF export output, audio recording, voice features (read-aloud, dictation), touch gestures, font import, OCR, embeds on real sites, the offline-PDF flow, and the backend test suite as a whole.
+- Not built yet: layers, minimap, smart-guide lines, a truly unbounded canvas (the "infinite" page is a large page that grows), protractor/compass tools, function plotter, table cell editing, image crop.
+- CA Study Hub data is device-local (not synced).
+- OCR is off by default (it downloads a language model on first use). Tesseract works for print and scanned PDFs but is weak on cursive handwriting.
 - The per-note passcode lock is a UI gate; use end-to-end encryption for content that must be unreadable on the server.
 - Peer-to-peer live sessions need a TURN server and are optional; the HTTP relay works everywhere.
-- Browser support for read-aloud, dictation and system-font access varies (Chrome/Edge work best).
+- Browser support for read-aloud, dictation and system-font access varies (Chrome and Edge work best).
 
 ## License
 [MIT](LICENSE)
