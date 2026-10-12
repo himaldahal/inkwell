@@ -46,7 +46,7 @@ Inkwell is a note-taking app in the spirit of Notability-style apps: write with 
 - PDF import and annotation, audio recording synced to handwriting.
 
 **Organising**
-- Nested subjects (notebooks), tags, favourites, pins, archive, trash with 30-day retention and restore.
+- Nested subjects (notebooks), tags, favourites, pins, archive, trash with 60-day auto-delete and restore.
 - Smart filters, global search, command palette (`Ctrl/Cmd+K`), `[[note links]]` with backlinks, daily note, per-note passcode lock, app lock.
 - Export as **PDF** only (single note, or a ZIP of PDFs per notebook).
 
@@ -74,27 +74,72 @@ Browser (PWA)                               Server (Django, shared-hosting frien
 Last-write-wins per record using `updatedAt`, tombstones for deletions, and a conflicted-copy note when two devices edit the same note at the same time. See [`ARCHITECTURE.md`](ARCHITECTURE.md), [`backend/README.md`](backend/README.md) (API) and [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
 
 ## Quick start
-Requirements: Python 3.10+, and Node 18+ only on your development machine.
+Requirements: **Python 3.10+** (server and development) and **Node 18+** (development machine or CI only, never on the production server).
 
+### One command
 ```bash
 git clone https://github.com/himaldahal/inkwell.git && cd inkwell
+./scripts/setup-dev.sh --email you@example.com --password 'a-strong-password' --run
+```
+`scripts/setup-dev.sh` creates the Python virtual environment (`backend/.venv`), installs `requirements.txt`, writes a development `backend/.env` with a freshly generated `SECRET_KEY`, runs the migrations, creates the superuser, installs the npm packages and (with `--run`) starts Django on `:8000` and Vite on `:5173`. It is safe to re-run. Options: `--no-frontend` (backend only), `--mode internal|commercial`, `--email/--password`, `--run`.
 
-# 1. Backend
+### Manual setup
+```bash
 cd backend
 python3 -m venv .venv && . .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env            # set SECRET_KEY (required) and DEBUG=1 for local use
+cp .env.example .env              # set SECRET_KEY (required); DEBUG=1 for local work
 python manage.py migrate
-python manage.py create_admin --email you@example.com --password 'a-strong-password'
+python manage.py create_admin --email you@example.com --password 'a-strong-password' --superuser
 python manage.py runserver 127.0.0.1:8000
-cd ..
-
-# 2a. Use the committed build: open http://127.0.0.1:8000
-# 2b. Or develop the frontend with hot reload (proxies /api to Django)
-npm install
-npm run dev
 ```
-Rebuild the production bundle with `npm run build` (output goes to `backend/inkwell/static_app/`, which is committed so servers do not need Node).
+Open <http://127.0.0.1:8000> to use the committed build. To work on the frontend with hot reload:
+```bash
+npm install
+npm run dev                       # http://localhost:5173, /api is proxied to Django on :8000
+```
+When you are done, `npm run build` writes the production bundle to `backend/inkwell/static_app/` (committed, so servers do not need Node).
+
+## Development configuration
+| Task | Command |
+|---|---|
+| Backend dev server | `cd backend && . .venv/bin/activate && python manage.py runserver` |
+| Frontend dev server | `npm run dev` |
+| Production build | `npm run build` |
+| Backend tests | `cd backend && python manage.py test` |
+| Regenerate icons | `node scripts/gen-icons.mjs` |
+| Release package for hosting | `scripts/build-release.sh` (creates `inkwell-deploy.zip`) |
+| Purge expired trash manually | `python manage.py purge_trash` |
+
+Development `.env` essentials: `SECRET_KEY=<long random string>`, `DEBUG=1`, `DEPLOYMENT_MODE=internal`, `ALLOWED_HOSTS=127.0.0.1,localhost`. Without `DEBUG=1`, cookies and HSTS are strict and the app expects HTTPS. Without SMTP settings, e-mails are written to the console.
+
+## Production configuration
+Set these on the server (environment variables or `backend/.env`; full list in [`backend/.env.example`](backend/.env.example)):
+
+| Variable | Purpose |
+|---|---|
+| `SECRET_KEY` | **Required.** Long random string. The app refuses to start without it |
+| `DEBUG` | `false` in production |
+| `ALLOWED_HOSTS` | Your domain(s), comma separated |
+| `APP_URL` | Public URL, used in e-mail links |
+| `DEPLOYMENT_MODE` | `internal` or `commercial` |
+| `DB_PATH` / `DB_ENGINE=mysql` + `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_HOST` | Database (SQLite by default; keep the file outside the web root) |
+| `MEDIA_ROOT` | Where uploaded files live (outside the web root) |
+| `EMAIL_HOST`, `EMAIL_PORT`, `EMAIL_USER`, `EMAIL_PASSWORD`, `EMAIL_USE_TLS` / `EMAIL_USE_SSL`, `DEFAULT_FROM_EMAIL` | SMTP (needed in `commercial` mode) |
+| `TRUSTED_PROXIES` | Proxy addresses whose `X-Forwarded-For` is trusted (rate limits, audit IPs) |
+| `TRASH_RETENTION_DAYS` | Defaults to 60 |
+| `ASSET_QUOTA_MB`, `ASSET_MAX_MB` | Per-user storage and per-file limits |
+| `EMBED_HOSTS` | Extra hosts allowed for embeds |
+
+### Deployment checklist
+1. On your machine run `scripts/build-release.sh` (or download the `inkwell-deploy.zip` artifact from CI). No Node is needed on the server.
+2. Upload and extract it. On cPanel use **Setup Python App** (Python 3.10+), startup file `passenger_wsgi.py`, then `pip install -r requirements.txt`.
+3. Set the variables above, then run `python manage.py migrate` and `python manage.py create_admin --email ... --superuser`.
+4. Serve over **HTTPS** (needed for the service worker, installation and the proof-of-work check).
+5. Optional: add a daily cron job `python manage.py purge_trash` (expired trash is also purged lazily without cron).
+6. Updating: upload the new release, run `python manage.py migrate`, restart the Python app.
+
+Step-by-step with cPanel specifics, SMTP examples and troubleshooting: [`DEPLOY.md`](DEPLOY.md).
 
 ## Deployment modes
 Set `DEPLOYMENT_MODE` in `backend/.env`:
