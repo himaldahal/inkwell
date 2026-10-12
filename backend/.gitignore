@@ -1,0 +1,11 @@
+.venv/
+.env
+.secret_key
+db.sqlite3
+data/
+media/
+staticfiles/
+__pycache__/
+*.pyc
+tmp/
+stderr.log
