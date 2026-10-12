@@ -8,8 +8,8 @@
     "dev": "vite --host",
     "build": "vite build",
     "preview": "vite preview --host",
-    "server": "node server/index.js",
-    "start": "npm run build && node server/index.js"
+    "build:deploy": "vite build",
+    "start": "cd backend && python manage.py runserver"
   },
   "dependencies": {
     "pdfjs-dist": "^4.10.38",
