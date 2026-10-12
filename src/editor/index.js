@@ -15,6 +15,7 @@ import { icon } from './icons.js';
 import { ibtn, popover, menu, closePopover, pref } from './ui.js';
 import { releaseAssets, getImage } from './assets.js';
 import { clipboard } from './tools/select.js';
+import { setAuthor } from './stroke.js';
 
 // optional modules owned by other agents; glob tolerates their absence at build time
 const OPT = { share: Object.values(import.meta.glob('../ui/share.js'))[0], activity: Object.values(import.meta.glob('../core/activity.js'))[0] };
@@ -73,6 +74,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
     if (lastPeers.length) engine.setPresence(lastPeers);
     engine.cursorEl = cursorEl;
     cleanup.push(() => engine.destroy());
+    OPT.activity?.().then((m) => Promise.resolve(m.currentAuthor?.()).then((a) => setAuthor(typeof a === 'string' ? a : a?.id))).catch(() => {});
     const ruler = mountRuler(engine); cleanup.push(() => ruler.destroy());
 
     // ---------- save ----------
@@ -161,15 +163,18 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
     const pinBtn = ibtn('pin', 'Pin', () => { note.pinned = !note.pinned; dirty = true; save(); paintFlags(); }, 'nophone');
     const tagBtn = ibtn('tag', 'Tags', (e, b) => tagsPop(b), 'nophone');
     const recBtn = ibtn('mic', 'Record audio', (e, b) => recClick(b), 'nophone');
-    const expBtn = ibtn('share', 'Export', (e, b) => exportMenu(b), 'nophone');
+    const expBtn = ibtn('file', 'Export as PDF', () => exportMenu(), 'nophone');
     const shareBtn = ibtn('users', 'Share with people', () => (OPT.share?.() || Promise.reject()).then((m) => m.openShareDialog(note.id)).catch(() => toast('Sharing is not available')), 'nophone noro');
     const avatars = h('div', { class: 'ik-avatars', 'aria-label': 'People in this note' });
     setAvatars = (peers) => {
+      avatars.hidden = !peers.length; avatars.title = 'Who is editing';
       avatars.replaceChildren(...peers.slice(0, 4).map((p) => h('span', { class: 'ik-av', title: p.name || 'Guest', style: { background: p.color || '#4f46e5' } }, (p.name || '?').trim().charAt(0).toUpperCase())),
-        ...(peers.length > 4 ? [h('span', { class: 'ik-av more' }, '+' + (peers.length - 4))] : []));
+        ...(peers.length > 4 ? [h('span', { class: 'ik-av more' }, '+' + (peers.length - 4))] : []), h('span', { class: 'ik-editing-n' }, peers.length + ' editing'));
     };
-    setAvatars(lastPeers);
+    setAvatars(lastPeers); avatars.setAttribute('role', 'button'); avatars.tabIndex = 0;
+    avatars.addEventListener('click', () => livePop(avatars));
     const pill = h('span', { class: 'ik-pill', hidden: !readOnly }, 'View only');
+    const searchBtn = ibtn('search', 'Search typed notes', () => { setView(wide() ? 'split' : 'text'); setTimeout(() => textLayer.toggleFind(), 50); }, 'nophone');
     const sideBtn = ibtn('sidebar', 'Pages panel', () => toggleSide(), 'nophone');
     const moreBtn = ibtn('more', 'More', (e, b) => moreMenu(b), 'more');
     const paintFlags = () => { favBtn.classList.toggle('on', !!note.favorite); pinBtn.classList.toggle('on', !!note.pinned); tagBtn.classList.toggle('badge', note.tags.length > 0); };
@@ -178,7 +183,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
     for (const [id, ic, label] of [['ink', 'pen', 'Handwriting'], ['split', 'columns', 'Split view'], ['text', 'doc', 'Typed notes']]) {
       vb[id] = h('button', { type: 'button', class: 'ik-segb ' + id, role: 'tab', title: label, 'aria-label': label, onclick: () => setView(id) }, icon(ic, 18)); viewSeg.append(vb[id]);
     }
-    const header = h('header', { class: 'ik-header' }, back, title, pill, avatars, viewSeg, h('div', { class: 'ik-hact' }, favBtn, pinBtn, tagBtn, recBtn, shareBtn, expBtn, sideBtn), moreBtn);
+    const header = h('header', { class: 'ik-header' }, back, title, pill, avatars, viewSeg, h('div', { class: 'ik-hact' }, favBtn, pinBtn, tagBtn, searchBtn, recBtn, shareBtn, expBtn, sideBtn), moreBtn);
 
     // ---------- zoom / page fabs ----------
     const zPct = h('button', { type: 'button', class: 'ik-btn zp', title: 'Fit to width', 'aria-label': 'Zoom, press to fit width', onclick: () => engine.fitWidth() }, '100%');
@@ -274,6 +279,26 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
     cleanup.push(() => { vv?.removeEventListener('resize', onVV); vv?.removeEventListener('scroll', onVV); window.removeEventListener('orientationchange', onVV); });
 
     // ---------- popovers ----------
+    function livePop(anchor) {
+      const st = (p) => p.state || (p.typing ? 'typing' : p.laser ? 'pointing' : p.drawing ? 'drawing on page ' + (note.pages.findIndex((x) => x.id === p.pageId) + 1) : p.pageId ? 'viewing page ' + (note.pages.findIndex((x) => x.id === p.pageId) + 1) : 'online');
+      const box = h('div', { class: 'ik-info' }, h('div', { class: 'ik-menu-title' }, 'Live now'),
+        ...(lastPeers.length ? lastPeers.map((p) => h('div', { class: 'ik-info-row' }, h('span', { class: 'ik-av', style: { background: p.color || '#4f46e5', marginLeft: 0 } }, (p.name || '?').charAt(0).toUpperCase()), h('b', {}, p.name || 'Guest'), h('span', {}, st(p)))) : [h('p', { class: 'ik-hint' }, 'Only you are here.')]),
+        h('button', { type: 'button', class: 'ik-btn wide', onclick: () => activityPop(anchor) }, 'Activity timeline'));
+      popover(anchor, box, { align: 'end' });
+    }
+    async function activityPop(anchor) {
+      const box = h('div', { class: 'ik-versions' }, h('div', { class: 'ik-menu-title' }, 'Activity'));
+      const list = h('div', { class: 'ik-vlist' }); box.append(list);
+      const ago = (t) => { const s = Math.max(0, (Date.now() - t) / 1000); return s < 60 ? 'just now' : s < 3600 ? Math.floor(s / 60) + 'm ago' : s < 86400 ? Math.floor(s / 3600) + 'h ago' : Math.floor(s / 86400) + 'd ago'; };
+      const paint = async () => {
+        let items = [];
+        try { const m = await OPT.activity?.(); items = (await m?.getActivity?.(note.id)) || []; } catch { /* optional */ }
+        list.replaceChildren(...(items.length ? items.slice(0, 60).map((a) => h('div', { class: 'ik-vrow' }, h('div', {},
+          h('b', {}, a.text || a.summary || `${a.name || a.author || 'Someone'} ${a.action || a.type || 'edited'}${a.count ? ' ' + a.count : ''}${a.page ? ' on page ' + a.page : ''}`), h('small', {}, ago(a.at || a.t || a.ts || a.time || Date.now()))))) : [h('p', { class: 'ik-hint' }, 'No activity yet.')]));
+      };
+      paint(); const off = busOn('activity:update', paint);
+      popover(anchor, box, { align: 'end', cls: 'wide', onClose: off });
+    }
     function tagsPop(anchor) {
       const box = h('div', { class: 'ik-tagbox' });
       const chips = h('div', { class: 'ik-chips' });
@@ -294,23 +319,16 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
         row('Pages', note.pages.length), row('Strokes', strokes), row('Words', words), row('Recordings', (note.recordings || []).length),
         row('Versions', (note.versions || []).length)), { align: 'end' });
     }
-    async function exportMenu(anchor) {
+    async function exportMenu() {
       const run = (fmt) => async () => {
         await flush();
         const m = await engine.media.export();
         try {
           if (m?.exportNote) { await m.exportNote(note, fmt); return; }
         } catch (e) { console.warn(e); toast('Export failed: ' + (e.message || e)); return; }
-        // fallbacks when the export module is unavailable
-        const base = (note.title || 'note').replace(/[^\w\- ]+/g, '').trim() || 'note';
-        if (fmt === 'json') download(new Blob([JSON.stringify(note)], { type: 'application/json' }), base + '.json');
-        else if (fmt === 'md') download(new Blob([`# ${note.title || 'Untitled'}\n\n${indexText()}\n`], { type: 'text/markdown' }), base + '.md');
-        else if (fmt === 'png') {
-          const pg = note.pages[0], c = document.createElement('canvas'); c.width = pg.width; c.height = pg.height;
-          paintPage(c.getContext('2d'), note, pg, { pdfCanvas: engine.pvs[0]?.cv.pdf }); c.toBlob((b) => download(b, base + '.png'));
-        } else toast('PDF export is not available right now');
+        toast('PDF export is not available right now');
       };
-      menu(anchor, [{ title: 'Export' }, { label: 'PDF', icon: 'file', run: run('pdf') }, { label: 'Image (PNG)', icon: 'image', run: run('png') }, { label: 'Markdown', icon: 'doc', run: run('md') }, { label: 'Inkwell JSON', icon: 'copy', run: run('json') }], { align: 'end' });
+      run('pdf')();
     }
     function versionsPop(anchor) {
       const box = h('div', { class: 'ik-versions' }, h('div', { class: 'ik-menu-title' }, 'Version history'));
@@ -336,6 +354,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       menu(anchor, [
         { label: note.favorite ? 'Remove favorite' : 'Favorite', icon: 'star', run: () => favBtn.click() },
         { label: note.pinned ? 'Unpin' : 'Pin', icon: 'pin', run: () => pinBtn.click() },
+        { label: 'Search in typed notes', icon: 'search', run: () => searchBtn.click() },
         { label: 'Tags...', icon: 'tag', run: () => setTimeout(() => tagsPop(anchor), 0) },
         { label: 'Note info', icon: 'info', run: () => setTimeout(() => infoPop(anchor), 0) },
         '-',
@@ -349,7 +368,8 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
         { label: 'Recordings', icon: 'list', run: () => setTimeout(() => recordingsPop(anchor), 0) },
         { label: 'Import PDF...', icon: 'file', run: () => pdfInput.click() },
         { label: 'Share with people...', icon: 'users', run: () => shareBtn.click() },
-        { label: 'Export...', icon: 'share', run: () => setTimeout(() => exportMenu(anchor), 0) },
+        { label: 'Export as PDF', icon: 'file', run: () => exportMenu() },
+        { label: 'Activity', icon: 'clock', run: () => setTimeout(() => activityPop(anchor), 0) },
         { label: 'Version history', icon: 'clock', run: () => setTimeout(() => versionsPop(anchor), 0) },
       ], { align: 'end' });
     }

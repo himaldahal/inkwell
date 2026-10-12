@@ -74,7 +74,10 @@ export function distSeg(px, py, ax, ay, bx, by) {
   let t = l ? ((px - ax) * dx + (py - ay) * dy) / l : 0; t = t < 0 ? 0 : t > 1 ? 1 : t;
   return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
 }
-export const tomb = (s) => (s.deleted ? s : { id: s.id, tool: s.tool, color: s.color, size: s.size, type: s.type, x: s.x, y: s.y, w: s.w, h: s.h, pts: s.pts ? [] : undefined, deleted: true, u: Date.now() });
+let AUTHOR = 'me';
+export const setAuthor = (a) => { AUTHOR = a || 'me'; };
+export const getAuthor = () => AUTHOR;
+export const tomb = (s) => (s.deleted ? s : { by: s.by, delBy: AUTHOR, id: s.id, tool: s.tool, color: s.color, size: s.size, type: s.type, x: s.x, y: s.y, w: s.w, h: s.h, pts: s.pts ? [] : undefined, deleted: true, u: Date.now() });
 export const alive = (arr) => arr.filter((x) => !x.deleted);
 export function strokeHit(s, x, y, r) {
   if (s.deleted || !s.pts.length) return false;

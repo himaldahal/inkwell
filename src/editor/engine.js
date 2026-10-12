@@ -4,7 +4,7 @@ import { putAsset } from '../core/db.js';
 import { toast } from '../core/store.js';
 import { History } from './history.js';
 import { PageView } from './pages.js';
-import { cloneStroke, bboxOf, tomb, alive, drawStroke } from './stroke.js';
+import { cloneStroke, bboxOf, tomb, alive, drawStroke, getAuthor } from './stroke.js';
 import { withData } from './items.js';
 import { seedUrl } from './assets.js';
 import { pref, clamp } from './ui.js';
@@ -161,7 +161,9 @@ export class Engine {
   // ---- history helpers ----
   snap(pv) { return { strokes: pv.page.strokes.slice(), items: pv.page.items.slice() }; }
   commit(pv, before) {
-    const after = this.snap(pv), ch = this._diff(before, after);
+    const after = this.snap(pv);
+    { const au = getAuthor(); for (const k of ['strokes', 'items']) { const ids = new Set(before[k].map((x) => x.id)); for (const x of after[k]) if (!ids.has(x.id) && !x.by) x.by = au; } }
+    const ch = this._diff(before, after);
     if (!ch.length) return false;
     const page = pv.page;
     this.history.push({ undo: () => this._applyCh(page, ch, 'undo'), redo: () => this._applyCh(page, ch, 'redo') });
@@ -250,6 +252,7 @@ export class Engine {
         if (this.mode === 'tool' && this.activePv === pv) pv._dirtyInk = true; else pv.renderInk();
       } else if (t.added.length && pv.visible) {
         const c = pv.ctx('ink'); for (const s of t.added) drawStroke(c, s);
+        this.flash(pv, t.added);
       }
       if (t.items || t.full) pv.renderItems();
       this.changed(pv, 'remote');
@@ -286,6 +289,16 @@ export class Engine {
     }
     this._renderRemote(touched, structural);
   }
+  flash(pv, strokes) {
+    if (this.mode === 'tool' && this.activePv === pv) return;
+    const peer = this.peers.find((p) => p.id === strokes[0]?.by), col = peer?.color || '#4f46e5', cv = pv.cv.live, ctx = pv.ctx('live');
+    if (cv.width < 2) return;
+    pv.clearLive(); ctx.save(); ctx.shadowColor = col; ctx.shadowBlur = 14;
+    for (const s of strokes) drawStroke(ctx, { ...s, color: col, tool: 'pen' });
+    ctx.restore(); cv.style.transition = 'none'; cv.style.opacity = '.75';
+    requestAnimationFrame(() => requestAnimationFrame(() => { cv.style.transition = 'opacity .8s'; cv.style.opacity = '0'; }));
+    clearTimeout(pv._ft); pv._ft = setTimeout(() => { if (!(this.mode === 'tool' && this.activePv === pv)) pv.clearLive(); cv.style.opacity = ''; cv.style.transition = ''; }, 900);
+  }
   setPresence(peers) { this.peers = peers || []; this.renderPresence(); }
   onLocalPresence(cb) { this.presCbs.add(cb); return () => this.presCbs.delete(cb); }
   renderPresence() {
@@ -295,7 +308,7 @@ export class Engine {
     }
     for (const p of this.peers) {
       const pv = this.pvById(p.pageId); if (!pv || p.x == null) continue;
-      const c = h('div', { class: 'ik-peer', style: { transform: `translate(${p.x * this.zoom}px,${p.y * this.zoom}px)`, '--pc': p.color || '#ef4444' } },
+      const c = h('div', { class: 'ik-peer' + (p.laser ? ' laser' : ''), style: { transform: `translate(${p.x * this.zoom}px,${p.y * this.zoom}px)`, '--pc': p.color || '#ef4444' } },
         h('i', { class: 'cur' }), h('span', {}, p.name || ''));
       pv.pres.append(c);
     }
@@ -573,7 +586,8 @@ export class Engine {
       if (e.width > 70 && e.height > 70 && this.penSeen) return; // big contact = palm
       this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, t: performance.now() });
       if (this.touches.size === 2) { this._startGesture(); try { this.scroll.setPointerCapture(e.pointerId); } catch { /* ignore */ } e.preventDefault(); return; }
-      if (this.touches.size > 2) return;
+      if (this.touches.size === 3) { this.mode = 'three'; this.three = { x: [...this.touches.values()].reduce((a, t) => a + t.x, 0) / 3, d: 0 }; return; }
+      if (this.touches.size > 3) return;
       const fingerPans = tool === 'hand' || (this.penSeen && !['select', 'text'].includes(tool));
       if (fingerPans) { this._startPan(e); return; }
     } else if (e.pointerType === 'mouse') {
@@ -596,6 +610,7 @@ export class Engine {
       const t = this.touches.get(e.pointerId); const dx = e.clientX - t.x, dy = e.clientY - t.y;
       t.x = e.clientX; t.y = e.clientY;
       if (this.mode === 'gesture') { this._gestureMove(); e.preventDefault(); return; }
+      if (this.mode === 'three') { this.three.d = [...this.touches.values()].reduce((a, q) => a + q.x, 0) / this.touches.size - this.three.x; return; }
       if (this.mode === 'pan') { this.scroll.scrollLeft -= dx; this.scroll.scrollTop -= dy; return; }
     }
     if (this.mode === 'pan' && e.pointerId === this.panId) {
@@ -627,6 +642,10 @@ export class Engine {
           if (!cancel && g && !g.moved && performance.now() - g.t0 < 380) this.undo();
           this.mode = this.touches.size ? 'gesture-end' : null; this.gesture = null;
         }
+        return;
+      }
+      if (this.mode === 'three') {
+        if (this.touches.size === 0) { const d = this.three.d; if (d < -60) this.undo(); else if (d > 60) this.redo(); this.mode = null; }
         return;
       }
       if (this.mode === 'gesture-end') { if (!this.touches.size) this.mode = null; return; }

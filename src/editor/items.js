@@ -53,6 +53,7 @@ export function itemRect(pv, it) {
 }
 /** keep export/other-module friendly mirrors in item.data */
 export function withData(it) {
+  /* mirrors for export/other modules; `by` is stamped on commit */
   const d = {};
   for (const k of ['assetId', 'text', 'html', 'fontSize', 'color', 'emoji']) if (it[k] != null) d[k] = it[k];
   return { ...it, data: d, u: Date.now() };
