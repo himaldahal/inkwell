@@ -2,6 +2,13 @@
 
 Captured ideas for the next work session. Nothing here is built yet unless stated in the README.
 
+## 0. Page format and page breaks (requested next)
+- Default page size **A4** (210 x 297 mm; today's pages are 820 x 1160 units, about A4 ratio) with real **page breaks**: content flows onto separate pages, not one continuous scroll. This applies to ink pages and to the typed-text view (paginate typed text into A4 pages with margins, headers/footers and page numbers).
+- Options per note (and defaults in Settings > Editor): page size (A4, A3, A5, B5, Letter, Legal, Tabloid, custom width x height with mm/in/px), orientation, margins (narrow, normal, wide, custom), page numbering, header/footer text, and **break mode**: *Paged* (default) or *Continuous* (infinite-style).
+- Page breaks: automatic when text overflows the page, manual break (`Ctrl+Enter` or "Insert page break"), "keep with next" for headings, widow/orphan control, "break before" for H1; visible break guides and a page indicator.
+- PDF export must match the on-screen pagination exactly (what you see is what you export); imported PDFs keep their own page size.
+- Convert between formats without losing content (reflow typed text, scale ink pages to the new size).
+
 ## 1. Premium typography
 - UI font: a premium variable sans (candidates: Inter Variable, Geist, Manrope or Plus Jakarta Sans) and a refined serif for titles (e.g. Source Serif 4, Fraunces or Newsreader). Self-host the files (woff2, subset, `font-display: swap`) so they work offline and need no CDN; precache in the service worker.
 - Handwriting set for the editor and templates: Caveat, Kalam, Patrick Hand, Nanum Pen Script, Shadows Into Light, Homemade Apple, Reenie Beanie, plus a signature font. All SIL OFL / open licences only; record each licence in `docs/FONTS.md`.
