@@ -9,11 +9,11 @@ export function createEraserTool(engine) {
     const c = engine.settings.eraser, r = c.size, list = pv.page.strokes;
     if (c.mode === 'stroke') {
       let ch = false;
-      const n = list.map((s) => { if (strokeHit(s, x, y, r * 0.5)) { ch = true; return tomb(s); } return s; });
+      const n = list.map((s) => { if (!s.locked && strokeHit(s, x, y, r * 0.5)) { ch = true; return tomb(s); } return s; });
       if (ch) { pv.page.strokes = n; sched(); }
     } else {
       let changed = false; const out = [];
-      for (const s of list) { const res = eraseFromStroke(s, x, y, r * 0.8); if (res) { changed = true; out.push(tomb(s), ...res.map((p) => ({ ...p, u: Date.now() }))); } else out.push(s); }
+      for (const s of list) { const res = s.locked ? null : eraseFromStroke(s, x, y, r * 0.8); if (res) { changed = true; out.push(tomb(s), ...res.map((p) => ({ ...p, u: Date.now() }))); } else out.push(s); }
       if (changed) { pv.page.strokes = out; sched(); }
     }
   }

@@ -53,4 +53,6 @@ npm install && npm run dev                          # Vite dev server proxies /a
 ## Optional
 - `LONGPOLL=1` long-poll endpoint (skip on hosts that kill long requests).
 - P2P live sessions need a TURN server (`TURN_URL`, `TURN_SECRET`); without it the HTTP relay is used.
-- Cron (not required): `python manage.py purge_trash`.
+- Cron (not required): `python manage.py purge_trash` (trash older than `TRASH_RETENTION_DAYS`, default 60, is also purged lazily).
+- `EMBED_HOSTS` (comma list) sets the CSP `frame-src` allow-list for embeds.
+- OCR: the worker/wasm assets are cached at runtime on first use (not precached) and the language data comes from `tessdata.projectnaptha.com` (allowed in `connect-src`).

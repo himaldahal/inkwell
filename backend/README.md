@@ -40,9 +40,18 @@ Records: `notebooks`, `notes`, `assets` (metadata). Each stored per owner as JSO
 `POST/GET /api/presence` (15 s TTL), `GET/POST /api/notes/<id>/activity` (coalesced 30 s windows, signed pagination), both collaborator-only and name/avatar only (never e-mail or IP). Default transport is the HTTP relay. Optional P2P (`/api/rtc/*`, signalling over HTTP polling) is relay-only (`iceTransportPolicy: relay`) so peers never see each other's IP; it needs a TURN server (`TURN_URL` + `TURN_SECRET` or `TURN_USERNAME/CREDENTIAL`). Without TURN it is unavailable and the relay is used. Strict NATs cannot do direct P2P anyway.
 
 ## Trash
-Deleting keeps the content for `TRASH_RETENTION_DAYS` (30): `GET /api/trash`, `POST /api/trash/<kind>/<id>/restore`, `DELETE /api/trash/<kind>/<id>`, `POST /api/trash/empty`. Cleanup runs lazily on requests; `python manage.py purge_trash` is optional for cron.
+Deleting keeps the content for `TRASH_RETENTION_DAYS` (default 60, then purged automatically): `GET /api/trash`, `POST /api/trash/<kind>/<id>/restore`, `DELETE /api/trash/<kind>/<id>` (permanent, removes attachment files), `POST /api/trash/delete` (selection), `POST /api/trash/empty`. Cleanup runs lazily on requests; `python manage.py purge_trash` is optional for cron.
 
-## Admin (staff only, token auth, audit-logged): `/api/admin/*`
+## Roles and permissions (RBAC, deny by default)
+Every `/api/admin/*` and `/api/system/*` view declares the permission it needs (`@api(..., perm=...)`; a test enforces it). Built-in roles: **superuser** (everything), **admin** (users, shares, abuse, mail, audit, analytics, health, trash), **support** (read users/devices/audit, reset sessions), **analyst** (analytics only), **user**. Superusers can create custom roles with any permission set (`/api/system/roles`, UI at `#/system`). Only holders of `roles.manage` assign roles; nobody but a superuser can touch or grant superuser. Create the first superuser with `python manage.py create_admin --superuser --email ... --password ...` (or `createsuperuser`).
+
+## System panel (`/api/system/*`, UI `#/system`)
+Analytics (growth, DAU/WAU/MAU, retention cohorts, devices, content and storage, sharing, mail, abuse, trash), API stats (per-endpoint volume, error rate, latency percentiles, sync conflicts, recorded by a light middleware), server info and job health, roles, audit with CSV export, and a read-only data viewer (whitelisted columns: no password hashes, tokens, mail bodies; end-to-end encrypted note content is never shown).
+
+## Pluggable client backend
+See `docs/BACKENDS.md` (adapter contract; `backend.provider` setting; `django` and `none` included).
+
+## Admin dashboard (token auth, audit-logged): `/api/admin/*`
 overview, users (create/edit/disable/reset/revoke sessions/delete), shares and links, abuse (blocks, lockouts, reports, failed sign-ins), settings, audit (+CSV), health (+ test e-mail), trash tools. UI: `#/admin`. Django admin remains at `/admin/`.
 
 ## Security notes

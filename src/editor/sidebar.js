@@ -21,12 +21,23 @@ export function pageMenu(anchor, engine, i) {
   });
   const allCb = h('label', { class: 'ik-check-l' }, h('input', { type: 'checkbox' }), 'Apply to all pages');
   allCb.firstChild.addEventListener('change', (e) => { all = e.target.checked; });
+  const sty = (patch) => { engine.setPageStyle(all ? 'all' : i, patch); pop.close(); };
   const paper = h('div', { class: 'ik-colors' });
-  PAPER_COLORS.forEach((p) => paper.append(h('button', { type: 'button', class: 'ik-sw' + ((note.paperColor || null) === p.c ? ' on' : ''), title: p.name, 'aria-label': 'Paper ' + p.name, style: { background: p.c || '#fff' }, onclick: () => { engine.setPaper(p.c); pop.close(); } })));
+  PAPER_COLORS.forEach((p) => paper.append(h('button', { type: 'button', class: 'ik-sw' + ((pg.paper !== undefined ? pg.paper : note.paperColor || null) === p.c && !pg.paperGrad ? ' on' : ''), title: p.name, 'aria-label': 'Paper ' + p.name, style: { background: p.c || '#fff' }, onclick: () => sty({ paper: p.c, paperGrad: null }) })));
+  const cust = h('input', { type: 'color', class: 'ik-custom', title: 'Custom paper color', 'aria-label': 'Custom paper color', value: typeof pg.paper === 'string' && pg.paper[0] === '#' ? pg.paper : '#ffffff' });
+  cust.addEventListener('change', () => sty({ paper: cust.value, paperGrad: null }));
+  paper.append(cust, h('button', { type: 'button', class: 'ik-sw', title: 'No background (transparent)', 'aria-label': 'Transparent paper', style: { background: 'repeating-conic-gradient(#ccc 0 25%, #fff 0 50%) 0 0/10px 10px' }, onclick: () => sty({ paper: 'none', paperGrad: null }) }));
+  const grads = h('div', { class: 'ik-colors' });
+  [['#fdfbfb', '#ebedee'], ['#e0c3fc', '#8ec5fc'], ['#fddb92', '#d1fdff'], ['#ffecd2', '#fcb69f'], ['#c9ffbf', '#ffafbd'], ['#1f2937', '#0b1020']].forEach((g) => grads.append(h('button', { type: 'button', class: 'ik-sw', title: 'Gradient', 'aria-label': 'Gradient paper', style: { background: `linear-gradient(135deg, ${g[0]}, ${g[1]})` }, onclick: () => sty({ paperGrad: g }) })));
+  const patC = h('input', { type: 'color', class: 'ik-custom', title: 'Pattern color', 'aria-label': 'Pattern color', value: pg.pattern?.color || note.pattern?.color || '#8791b3' });
+  const patO = h('input', { type: 'range', min: 0.1, max: 1, step: 0.05, class: 'ik-range', 'aria-label': 'Pattern opacity', value: pg.pattern?.opacity ?? note.pattern?.opacity ?? 1, style: { width: '110px' } });
+  const patch = () => engine.setPageStyle(all ? 'all' : i, { pattern: { color: patC.value, opacity: +patO.value } });
+  patC.addEventListener('change', patch); patO.addEventListener('change', patch);
+  const patRow = h('div', { class: 'ik-colors', style: { padding: '4px 10px' } }, patC, patO);
   const item = (ic, label, fn, danger) => h('button', { type: 'button', class: 'ik-menu-item' + (danger ? ' danger' : ''), onclick: done(fn) }, icon(ic, 18), h('span', {}, label));
   const box = h('div', { class: 'ik-menu ik-pagemenu' },
     h('div', { class: 'ik-menu-title' }, `Page ${i + 1} template`), tplRow, allCb,
-    h('div', { class: 'ik-menu-title' }, 'Paper color'), paper, h('div', { class: 'ik-sep' }),
+    h('div', { class: 'ik-menu-title' }, 'Paper color'), paper, h('div', { class: 'ik-menu-title' }, 'Gradient'), grads, h('div', { class: 'ik-menu-title' }, 'Pattern color / opacity'), patRow, h('div', { class: 'ik-sep' }),
     item('plus', 'Add page after', () => engine.addPage(i)),
     item('copy', 'Duplicate page', () => engine.duplicatePage(i)),
     i > 0 ? item('up', 'Move up', () => engine.movePage(i, i - 1)) : null,
@@ -34,6 +45,7 @@ export function pageMenu(anchor, engine, i) {
     pg.type === 'draw' ? h('button', { type: 'button', class: 'ik-menu-item', onclick: () => file.click() }, icon('image', 18), h('span', {}, pg.bgImage ? 'Replace background image' : 'Background image...')) : null,
     pg.bgImage ? h('div', { class: 'ik-seg inl' }, ...['contain', 'cover', 'stretch'].map((f) => h('button', { type: 'button', class: 'ik-segb' + (pg.bgImage.fit === f ? ' on' : ''), onclick: done(() => engine.setBgFit(i, f)) }, f))) : null,
     pg.bgImage ? item('x', 'Remove background image', () => engine.setBgImage(i, null)) : null,
+    item('file', 'Page title / bookmark...', () => { const t = prompt('Page title (leave empty to clear)', pg.title || ''); if (t != null) engine.setPageStyle(i, { title: t || null, bookmark: t ? true : null }); }),
     item('trash', 'Delete page', () => engine.deletePage(i), true), file);
   pop = popover(anchor, box, { align: 'end', cls: 'wide' });
 }

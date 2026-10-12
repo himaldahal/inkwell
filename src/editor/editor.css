@@ -275,3 +275,17 @@
 .ik-root:not(.ik-phone)[data-tbpos="left"] .ik-histbtns, .ik-root:not(.ik-phone)[data-tbpos="right"] .ik-histbtns { margin: 4px 0 0; padding: 4px 0 0; border-left: 0; border-top: 1px solid var(--ik-border); }
 .ik-root:not(.ik-phone)[data-tbpos="left"] .ik-options { left: 80px; transform: none; top: 70px; } .ik-root:not(.ik-phone)[data-tbpos="right"] .ik-options { left: auto; right: 80px; transform: none; top: 70px; }
 .ik-left .ik-main { flex-direction: row-reverse; } .ik-left .ik-fab.zoom { right: auto; left: 16px; } .ik-left .ik-side { border-right: 0; border-left: 1px solid var(--ik-border); }
+.ik-page.ik-infinite { border-radius: 0; box-shadow: none; outline: 1px dashed color-mix(in srgb, var(--ik-text) 14%, transparent); }
+.ik-frame { border: 2px dashed color-mix(in srgb, var(--ik-accent) 55%, transparent); border-radius: 10px; background: color-mix(in srgb, var(--ik-accent) 4%, transparent); }
+.ik-frame-t { position: absolute; left: 8px; top: -26px; font: 600 15px system-ui; color: var(--ik-accent); white-space: nowrap; }
+.ik-embed { width: 100%; height: 100%; display: flex; flex-direction: column; border: 1px solid #cbd5e1; border-radius: 10px; background: #f8fafc; color: #0f172a; overflow: hidden; font: 14px system-ui; }
+.ik-embed-h { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: #e2e8f0; font-size: 13px; } .ik-embed-h span { opacity: .7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ik-embed-b { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+.ik-embed.live .ik-embed-b { display: block; } .ik-embed iframe, .ik-embed video, .ik-embed audio { pointer-events: none; }
+.ik-root[data-tool="hand"] .ik-embed iframe, .ik-root[data-tool="hand"] .ik-embed video, .ik-root[data-tool="hand"] .ik-embed audio { pointer-events: auto; }
+.ik-embed-btn { pointer-events: auto; padding: 9px 16px; border-radius: 10px; border: 0; background: var(--ik-accent); color: #fff; font: 600 14px system-ui; cursor: pointer; text-decoration: none; }
+.ik-lib { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 4px; max-height: 360px; overflow: auto; }
+.ik-lib-i { padding: 12px 6px; border-radius: 10px; border: 1px solid var(--ik-border); background: var(--ik-surface); color: inherit; font: 13px system-ui; cursor: pointer; width: 100%; transition: transform .18s var(--ik-spring); }
+.ik-lib-i:hover { transform: scale(1.05); border-color: var(--ik-accent); } .ik-lib-w { position: relative; display: block; }
+.ik-lib-x { position: absolute; right: 2px; top: 2px; border: 0; background: transparent; color: var(--ik-muted); cursor: pointer; font-size: 16px; }
+.ik-toc-row.over { outline: 2px solid var(--ik-accent); }

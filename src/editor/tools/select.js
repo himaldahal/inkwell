@@ -4,11 +4,14 @@ import { bboxOf, strokeHit, polyContains, xformStroke, cloneStroke, drawStroke, 
 import { itemRect, withData } from '../items.js';
 import { icon } from '../icons.js';
 import { toast } from '../../core/store.js';
+import { fixBindings, isConnector } from '../connectors.js';
+import { CLOSED } from '../shapes.js';
+import { pref } from '../ui.js';
 
 export const clipboard = { data: null, n: 0 };
 
 export function createSelectTool(engine) {
-  let mode = null, pv = null, start = null, before = null, orig = null, box0 = null, handle = '', moved = false, lasso = [], tapStroke = null, lastTap = { id: null, t: 0 };
+  let extra = new Set(), mode = null, pv = null, start = null, before = null, orig = null, box0 = null, handle = '', moved = false, lasso = [], tapStroke = null, lastTap = { id: null, t: 0 };
 
   const S = () => engine.selection;
   function selBox() {
@@ -30,8 +33,9 @@ export function createSelectTool(engine) {
     before = engine.snap(pv);
     const s = S();
     orig = { strokes: new Map(), items: new Map() };
-    for (const st of before.strokes) if (s.strokes.has(st.id)) orig.strokes.set(st.id, st);
-    for (const it of before.items) if (s.items.has(it.id)) orig.items.set(it.id, it);
+    for (const st of before.strokes) if (s.strokes.has(st.id) && !st.locked && !st.deleted) orig.strokes.set(st.id, st);
+    for (const it of before.items) if (s.items.has(it.id) && !it.locked && !it.deleted) orig.items.set(it.id, it);
+    extra = new Set(before.strokes.filter((st) => isConnector(st) && !s.strokes.has(st.id) && (s.strokes.has(st.bind.a) || s.strokes.has(st.bind.b))).map((st) => st.id));
     box0 = selBox(); moved = false;
   }
   let raf = 0;
@@ -39,10 +43,13 @@ export function createSelectTool(engine) {
     const page = pv.page, ns = new Map();
     page.strokes = before.strokes.map((st) => {
       const o = orig.strokes.get(st.id); if (!o) return st;
-      const n = xformStroke(o, f, sk); ns.set(st.id, n); return n;
+      let n = xformStroke(o, f, sk);
+      if (n.bind) { const sl = S().strokes; if ((n.bind.a && !sl.has(n.bind.a)) || (n.bind.b && !sl.has(n.bind.b))) n = { ...n, bind: undefined }; }
+      ns.set(st.id, n); return n;
     });
+    { const fx = fixBindings(page.strokes); if (fx.updated.length) { page.strokes = fx.list; for (const u of fx.updated) ns.set(u.id, u); } }
     page.items = before.items.map((it) => { const o = orig.items.get(it.id); return o ? withData(itemFn(o)) : it; });
-    if (!moved) { moved = true; pv.renderInk(new Set(orig.strokes.keys())); }
+    if (!moved) { moved = true; pv.renderInk(new Set([...orig.strokes.keys(), ...extra])); }
     pv.ctx('live'); pv.clearLive(); const live = pv.ctx('live');
     for (const st of ns.values()) drawStroke(live, st);
     pv.renderItems();
@@ -62,7 +69,11 @@ export function createSelectTool(engine) {
       const it = engine.itemAt(pv, pt.x, pt.y);
       let hs = null;
       for (let i = pv.page.strokes.length - 1; i >= 0; i--) if (strokeHit(pv.page.strokes[i], pt.x, pt.y, r)) { hs = pv.page.strokes[i]; break; }
-      if (sel && sel.pv === pv && inBox(selBox(), pt.x, pt.y, 4)) { mode = 'move'; tapStroke = hs; begin(); return; }
+      if (sel && sel.pv === pv && inBox(selBox(), pt.x, pt.y, 4)) { if (pt.e.ctrlKey || pt.e.altKey) { api.duplicate(); } mode = 'move'; tapStroke = hs; begin(); return; }
+      if (!it && hs && hs.shape && CLOSED.has(hs.shape) && lastTap.id === hs.id && performance.now() - lastTap.t < 380 && engine.enabled('excalidraw')) {
+        const b = bboxOf(hs), fs = engine.settings.text.fontSize; mode = 'edit'; lastTap = { id: null, t: 0 };
+        engine.insertTextBox(pv, b.x0 + (b.x1 - b.x0) * 0.1, (b.y0 + b.y1) / 2 - fs * 0.8, '', '', { w: (b.x1 - b.x0) * 0.8, align: 'center' }); return;
+      }
       const target = it || hs;
       if (target) {
         if (it) select(pv, [], [it.id]); else select(pv, [hs.id], []);
@@ -85,7 +96,8 @@ export function createSelectTool(engine) {
       const dx = pt.x - start.x, dy = pt.y - start.y;
       if (mode === 'move') {
         if (!moved && Math.hypot(dx, dy) * engine.zoom < 4) return;
-        apply((x, y) => [x + dx, y + dy], 1, (o) => ({ ...o, x: o.x + dx, y: o.y + dy }));
+        const mx = engine.snapV(box0.x0 + dx) - box0.x0, my = engine.snapV(box0.y0 + dy) - box0.y0;
+        apply((x, y) => [x + mx, y + my], 1, (o) => ({ ...o, x: o.x + mx, y: o.y + my }));
       } else if (mode === 'rotate') {
         const b = box0, cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
         let d = Math.atan2(pt.y - cy, pt.x - cx) - Math.atan2(start.y - cy, start.x - cx);
@@ -148,7 +160,7 @@ export function createSelectTool(engine) {
     delete() {
       const s = S(); if (!s) return;
       const p = s.pv, b = engine.snap(p);
-      p.page.strokes = p.page.strokes.map((x) => (s.strokes.has(x.id) ? tomb(x) : x)); p.page.items = p.page.items.map((x) => (s.items.has(x.id) ? tomb(x) : x));
+      p.page.strokes = p.page.strokes.map((x) => (s.strokes.has(x.id) && !x.locked ? tomb(x) : x)); p.page.items = p.page.items.map((x) => (s.items.has(x.id) && !x.locked ? tomb(x) : x));
       engine.clearSelection(); engine.commit(p, b); p.renderInk(); p.renderItems();
     },
     cut() { if (this.copy()) this.delete(); },
@@ -179,6 +191,7 @@ export function createSelectTool(engine) {
       const p = s.pv, b = engine.snap(p), box = selBox(), t = Date.now();
       p.page.strokes = p.page.strokes.map((x) => (!x.deleted && s.strokes.has(x.id) ? { ...fs(x, box), u: t } : x));
       p.page.items = p.page.items.map((x) => (!x.deleted && s.items.has(x.id) ? withData(fi(x, box)) : x));
+      engine.fixConnectors(p);
       engine.commit(p, b); p.renderInk(); p.renderItems(); if (keepSel) api.renderUI();
     },
     group(on = true) { const g = on ? newId() : undefined; this.mutate((x) => ({ ...x, groupId: g }), (x) => ({ ...x, groupId: g })); },
@@ -210,10 +223,25 @@ export function createSelectTool(engine) {
         { title: 'Ink' },
         ...[['smooth', 'Smooth'], ['simplify', 'Simplify'], ['straighten', 'Straighten to line'], ['toShape', 'Convert to shape'], ['thicker', 'Thicker'], ['thinner', 'Thinner']].map(([k, n]) => ({ label: n, icon: 'pen', run: () => import('../transform.js').then((m) => m.inkOp(engine, k)) })),
         { label: 'Inspector (x, y, size, angle)...', icon: 'sliders', run: () => setTimeout(() => import('../transform.js').then((m) => m.inspector(anchor, engine)), 0) },
+        { label: 'Lock / unlock', icon: 'pin', run: () => api.lock([...s.pv.page.strokes, ...s.pv.page.items].some((x) => !x.deleted && x.locked && (s.strokes.has(x.id) || s.items.has(x.id))) ? false : true) },
+        { label: 'Zoom to selection', icon: 'fit', run: () => engine.zoomToBox(s.pv, selBox()) },
+        { label: 'Frame with title...', icon: 'layout', run: () => engine.insertFrame(prompt('Frame title', 'Frame') || 'Frame', selBox()) },
+        { label: 'Save to library...', icon: 'star', run: () => api.saveToLibrary(prompt('Name for this element', 'My element')) },
+        ...(engine.enabled('ocr') ? [{ label: 'Recognize text', icon: 'type', run: () => engine.emit('ocr', { selection: true }) }] : []),
         { title: 'Arrange' },
         { label: 'Flip horizontal', icon: 'columns', run: () => api.flip('h') }, { label: 'Flip vertical', icon: 'layout', run: () => api.flip('v') },
         { label: 'Bring to front', icon: 'up', run: () => api.order(true) }, { label: 'Send to back', icon: 'down', run: () => api.order(false) },
       ] });
+    },
+    box() { return selBox(); },
+    selectIds(p, s, i) { select(p, s, i); },
+    lock(on = true) { this.mutate((x) => ({ ...x, locked: on || undefined }), (x) => ({ ...x, locked: on || undefined })); },
+    saveToLibrary(name) {
+      const s = S(); if (!s) return; const b = selBox();
+      const lib = pref.get('library', []);
+      lib.push({ name: name || 'My element', strokes: s.pv.page.strokes.filter((x) => !x.deleted && s.strokes.has(x.id)).map((x) => ({ ...x, bind: undefined, by: undefined, at: undefined, pts: x.pts.map((v, i) => (i % 3 === 0 ? v - b.x0 : i % 3 === 1 ? v - b.y0 : v)) })),
+        items: s.pv.page.items.filter((x) => !x.deleted && s.items.has(x.id)).map((x) => ({ ...x, x: x.x - b.x0, y: x.y - b.y0 })), w: b.x1 - b.x0, h: b.y1 - b.y0 });
+      pref.set('library', lib.slice(-24)); toast('Saved to library');
     },
     toTyped() {
       const s = S(); if (!s) return;

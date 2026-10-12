@@ -61,14 +61,15 @@ export function mountTextLayer(host, note, { onChange, hooks = {} }) {
     mk('search', 'Find', toggleFind),
     h('span', { class: 'ik-vsep' }),
     mk('wand', 'Transform text', (e) => hooks.transform?.(e.currentTarget, ed)),
-    mk('volume', 'Read aloud', (e) => hooks.read?.(e.currentTarget, ed)),
-    mk('mic', 'Dictate', (e) => hooks.dictate?.(e.currentTarget, ed)));
+    ...(hooks.tts !== false ? [mk('volume', 'Read aloud', (e) => hooks.read?.(e.currentTarget, ed)), mk('mic', 'Dictate', (e) => hooks.dictate?.(e.currentTarget, ed))] : []));
   function refresh() { for (const [b, st] of btns) { let on = false; try { on = !!st?.(); } catch { /* ignore */ } b.classList.toggle('on', on); } }
 
   ed.addEventListener('input', sync);
   ed.addEventListener('paste', (e) => { e.preventDefault(); document.execCommand('insertText', false, e.clipboardData.getData('text/plain')); });
   ed.addEventListener('click', (e) => {
-    const a = e.target.closest('a'); if (a && (e.ctrlKey || e.metaKey)) { window.open(a.href, '_blank', 'noopener'); return; }
+    const a = e.target.closest('a'); const hr = a?.getAttribute('href') || '';
+    if (a && hr.startsWith('#ik-')) { e.preventDefault(); if (hr.startsWith('#ik-page-')) hooks.goPage?.(+hr.slice(9) - 1); else ed.querySelector(hr)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+    if (a && (e.ctrlKey || e.metaKey)) { window.open(a.href, '_blank', 'noopener'); return; }
     const li = e.target.closest('ul.ik-check > li');
     if (li && e.target === li && e.offsetX < 28) { li.toggleAttribute('data-done'); sync(); }
   });

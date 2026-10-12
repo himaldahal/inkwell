@@ -3,6 +3,7 @@ import { h } from '../core/utils.js';
 import { icon } from './icons.js';
 import { ibtn, pref, popover } from './ui.js';
 import { toast } from '../core/store.js';
+import { enabled } from './mods.js';
 import { drawStroke } from './stroke.js';
 import { BRUSHES, FONTS } from './brushes.js';
 import { SHAPES } from './shapes.js';
@@ -18,7 +19,7 @@ export function buildToolbar(engine, act) {
   import('./fonts.js').then(async (m) => { const l = await m.loadSavedFonts(); fontLib.extra = l.map((f) => [f, m.fontStack(f)]); if (engine.tool === 'text') render(); }).catch(() => {});
   const TOOLS = [
     ['pen', 'Pen (P)'], ['highlighter', 'Highlighter (H)'], ['pencil', 'Pencil (N)'], ['eraser', 'Eraser (E)'], ['select', 'Lasso select (V)'],
-    ['shape', 'Shapes (S)'], ['text', 'Text box (T)'], ['image', 'Insert image (I)', 'action'], ['sticker', 'Stickers', 'action'],
+    ['shape', 'Shapes (S)'], ['text', 'Text box (T)'], ['image', 'Insert image (I)', 'action'], ['sticker', 'Stickers', 'action'], ['library', 'Element library', 'action'],
     ['laser', 'Laser pointer (L)'], ['hand', 'Hand / pan (Space)'], ['ruler', 'Ruler (R)', 'toggle'],
   ];
   const tools = h('div', { class: 'ik-tools', role: 'toolbar', 'aria-label': 'Tools' });
@@ -27,6 +28,7 @@ export function buildToolbar(engine, act) {
     const b = ibtn(id, label, (e, el) => {
       if (id === 'image') act.pickImage();
       else if (id === 'sticker') act.stickers(el);
+      else if (id === 'library') act.library(el);
       else if (id === 'ruler') act.toggleRuler();
       else engine.setTool(id);
     }, 'tool t-' + id);
@@ -105,7 +107,7 @@ export function buildToolbar(engine, act) {
     const f = (cmd, ic, label, txt) => { const b = ibtn(null, label, () => engine.fmt(cmd), 'sm'); if (txt) b.append(h('b', {}, txt)); else b.append(icon(ic, 18)); return b; };
     return h('div', { class: 'ik-textfmt' },
       f('bold', null, 'Bold', 'B'), f('italic', null, 'Italic', 'I'), f('underline', null, 'Underline', 'U'), f('strikeThrough', null, 'Strikethrough', 'S'),
-      ibtn('volume', 'Read aloud', (e, b) => act.read(b), 'sm'), ibtn('mic', 'Dictate', (e, b) => act.dictate(b), 'sm'),
+      ...(enabled('tts') ? [ibtn('volume', 'Read aloud', (e, b) => act.read(b), 'sm'), ibtn('mic', 'Dictate', (e, b) => act.dictate(b), 'sm')] : []),
       f('insertUnorderedList', 'list', 'Bulleted list'), f('insertOrderedList', 'olist', 'Numbered list'), hiBtn(), f('justifyLeft', 'doc', 'Align left'), f('justifyCenter', null, 'Align center', '≡'), f('justifyRight', null, 'Align right', '▤'));
   }
   function render() {
@@ -126,6 +128,13 @@ export function buildToolbar(engine, act) {
         const dash = h('label', { class: 'ik-check-l' }, h('input', { type: 'checkbox' }), 'Dashed');
         dash.firstChild.checked = !!c.dash; dash.firstChild.addEventListener('change', (e) => engine.set('shape', { dash: e.target.checked }));
         opts.append(quick, shelf, fillRow, dash);
+        if (enabled('excalidraw')) {
+          const sk = h('label', { class: 'ik-check-l' }, h('input', { type: 'checkbox' }), 'Sketch style');
+          sk.firstChild.checked = !!c.sketch; sk.firstChild.addEventListener('change', (e) => engine.set('shape', { sketch: e.target.checked }));
+          const fsel = h('select', { class: 'ik-ref-sel', 'aria-label': 'Fill style', style: { flex: 'none', width: 'auto' } }, ...[['solid', 'Solid fill'], ['hachure', 'Hachure'], ['cross', 'Cross-hatch']].map(([v, n]) => h('option', { value: v }, n)));
+          fsel.value = c.fillStyle || 'solid'; fsel.addEventListener('change', () => engine.set('shape', { fillStyle: fsel.value }));
+          opts.append(sk, fsel);
+        }
       }
       if (tool === 'pen') {
         const sel = h('select', { class: 'ik-ref-sel', 'aria-label': 'Brush', style: { flex: 'none', width: 'auto' } }, ...BRUSHES.map(([id, n]) => h('option', { value: id }, n)));

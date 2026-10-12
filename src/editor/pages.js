@@ -1,6 +1,6 @@
 // PageView: one page = layered canvases (bg, pdf, hl, ink, live) + DOM items layer + selection overlay.
 import { h } from '../core/utils.js';
-import { drawTemplate } from './templates.js';
+import { drawTemplate, paperOf, patternOf } from './templates.js';
 import { drawStroke } from './stroke.js';
 import { syncItems, clearItems } from './items.js';
 import { getImage, cachedImage } from './assets.js';
@@ -21,7 +21,7 @@ export class PageView {
     this.cv = {};
     this.ctxs = {};
     const names = ['bg', 'pdf', 'hl', 'ink', 'live'];
-    this.el = h('div', { class: 'ik-page', 'data-id': page.id });
+    this.el = h('div', { class: 'ik-page' + (page.infinite ? ' ik-infinite' : ''), 'data-id': page.id });
     for (const n of names) { const c = h('canvas', { class: 'ik-cv ik-cv-' + n }); this.cv[n] = c; this.el.append(c); }
     this.items = h('div', { class: 'ik-items' });
     this.sel = h('div', { class: 'ik-sel' });
@@ -44,7 +44,7 @@ export class PageView {
   computeScale() {
     const dpr = Math.min(window.devicePixelRatio || 1, 3);
     let s = dpr * this.zoom;
-    s = Math.min(s, Math.sqrt(MAX_PX / (this.w * this.h)), 4096 / Math.max(this.w, this.h));
+    s = Math.min(s, Math.sqrt((this.page.infinite ? 14e6 : MAX_PX) / (this.w * this.h)), 4096 / Math.max(this.w, this.h) * (this.page.infinite ? 2 : 1));
     return Math.max(0.25, s);
   }
   size(n, on = true) {
@@ -79,10 +79,10 @@ export class PageView {
     const note = this.engine.note, pg = this.page, tk = this.token;
     const ctx = this.size('bg');
     if (pg.type === 'pdf') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, this.w, this.h); return; }
-    drawTemplate(ctx, this.w, this.h, pg.bg || note.template || 'lined', note.paperColor, pg.bg ? null : note.preset);
+    drawTemplate(ctx, this.w, this.h, pg.bg || note.template || 'lined', paperOf(note, pg), pg.bg ? null : note.preset, patternOf(note, pg));
     if (pg.bgImage?.assetId) {
       const img = cachedImage(pg.bgImage.assetId) || await getImage(pg.bgImage.assetId);
-      if (img && tk === this.token) { drawTemplate(ctx, this.w, this.h, 'blank', note.paperColor); drawBgImage(ctx, img, this.w, this.h, pg.bgImage.fit); }
+      if (img && tk === this.token) { drawTemplate(ctx, this.w, this.h, 'blank', paperOf(note, pg)); drawBgImage(ctx, img, this.w, this.h, pg.bgImage.fit); }
     }
   }
   async renderPdf() {
@@ -119,9 +119,9 @@ export function paintPage(ctx, note, page, { pdfCanvas, items = true } = {}) {
   const w = page.width, hh = page.height;
   if (page.type === 'pdf') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, hh); if (pdfCanvas && pdfCanvas.width > 1) ctx.drawImage(pdfCanvas, 0, 0, w, hh); }
   else {
-    drawTemplate(ctx, w, hh, page.bg || note.template || 'lined', note.paperColor, page.bg ? null : note.preset);
+    drawTemplate(ctx, w, hh, page.bg || note.template || 'lined', paperOf(note, page), page.bg ? null : note.preset, patternOf(note, page));
     const bi = page.bgImage && cachedImage(page.bgImage.assetId);
-    if (bi) { drawTemplate(ctx, w, hh, 'blank', note.paperColor); drawBgImage(ctx, bi, w, hh, page.bgImage.fit); }
+    if (bi) { drawTemplate(ctx, w, hh, 'blank', paperOf(note, page)); drawBgImage(ctx, bi, w, hh, page.bgImage.fit); }
   }
   ctx.save(); ctx.globalCompositeOperation = 'multiply';
   for (const s of page.strokes) if (!s.deleted && s.tool === 'highlighter') drawStroke(ctx, s);

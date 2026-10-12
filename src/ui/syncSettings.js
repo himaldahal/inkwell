@@ -24,7 +24,7 @@ export function mountSyncSettings(el) {
   ensureCss();
   const root = h('div', { class: 'sx', style: { maxWidth: '620px' } });
   el.append(root);
-  let busy = false, msg = '', auth = null, info = null, devices = null, e2e = false, alive = true, twofa = null, codes = null;
+  let busy = false, msg = '', auth = null, info = null, devices = null, trash = null, picked = new Set(), e2e = false, alive = true, twofa = null, codes = null;
 
   const run = async (fn, okMsg) => {
     busy = true; msg = ''; paint();
@@ -34,7 +34,7 @@ export function mountSyncSettings(el) {
   async function load() {
     auth = await sync.getAuth(); e2e = await sync.isE2EEnabled();
     if (auth?.token && navigator.onLine) {
-      try { info = await sync.getAccountInfo(); devices = await sync.listDevices(); } catch (e) { if (e.status === 401) info = null; }
+      try { info = await sync.getAccountInfo(); devices = await sync.listDevices(); trash = (await sync.apiCall('/api/trash')).items; } catch (e) { if (e.status === 401) info = null; }
     } else { info = null; devices = null; }
     paint();
   }
@@ -59,7 +59,8 @@ export function mountSyncSettings(el) {
       h('div', { class: 'sx-row' }, file, h('button', { class: 'sx-btn sm', onclick: () => file.click() }, 'Change photo'),
         u.avatar ? h('button', { class: 'sx-btn sm', onclick: () => run(() => sync.updateProfile({ removeAvatar: true }), 'Photo removed') }, 'Remove') : null),
       l1, h('div', { class: 'sx-row' }, h('button', { class: 'sx-btn', disabled: busy, onclick: () => run(() => sync.updateProfile({ displayName: name.value }), 'Saved') }, 'Save name'),
-        u.isStaff ? h('button', { class: 'sx-btn', onclick: () => go('/admin') }, 'Open admin dashboard') : null));
+        (u.permissions || []).length ? h('button', { class: 'sx-btn', onclick: () => go('/admin') }, 'Open admin dashboard') : null,
+        (u.permissions || []).includes('system.read') ? h('button', { class: 'sx-btn', onclick: () => go('/system') }, 'System panel') : null));
   }
 
   function status() {
@@ -85,6 +86,21 @@ export function mountSyncSettings(el) {
         h('div', {}, h('b', {}, d.name || 'Device', d.current ? ' (this device)' : ''), h('small', {}, `${[d.browser, d.os].filter(Boolean).join(' on ')} - active ${ago(d.lastSeen)}`)),
         d.current ? null : h('button', { class: 'sx-btn sm danger', disabled: busy, onclick: () => { if (confirm('Sign out that device?')) run(() => sync.revokeDevice(d.id), 'Device removed'); } }, 'Remove')))) : h('p', {}, navigator.onLine ? 'Loading...' : 'Connect to see devices.'),
       h('button', { class: 'sx-btn', disabled: busy || !devices || devices.length < 2, onclick: () => run(() => sync.apiCall('/api/auth/logout-all', { method: 'POST' }), 'Signed out everywhere else') }, 'Sign out all other devices'));
+  }
+
+  function trashCard() {
+    const items = trash || [];
+    const key = (t) => t.kind + ':' + t.id;
+    return h('details', { class: 'sx-card' }, h('summary', {}, `Deleted items on the server (${items.length})`),
+      h('p', {}, 'Deleted notes are kept for 60 days so you can restore them, then removed automatically. You can also delete them forever right now (attachments included).'),
+      h('div', { class: 'sx-list' }, items.length ? items.map((t) => h('div', {},
+        h('label', { style: { flexDirection: 'row', display: 'flex', gap: '8px', alignItems: 'center' } }, h('input', { type: 'checkbox', checked: picked.has(key(t)), onchange: (e) => { e.target.checked ? picked.add(key(t)) : picked.delete(key(t)); } }),
+          h('span', {}, t.title || 'Untitled', h('small', {}, `${t.kind === 'notebooks' ? 'Notebook' : 'Note'}${t.daysLeft != null ? ' - ' + t.daysLeft + ' day(s) left' : ''}`))),
+        h('div', { class: 'sx-row' }, h('button', { class: 'sx-btn sm', disabled: busy, onclick: () => run(() => sync.apiCall(`/api/trash/${t.kind}/${encodeURIComponent(t.id)}/restore`, { method: 'POST' }).then(() => sync.syncNow()), 'Restored') }, 'Restore'),
+          h('button', { class: 'sx-btn sm danger', disabled: busy, onclick: () => { if (confirm('Delete forever? This cannot be undone.')) run(() => sync.apiCall(`/api/trash/${t.kind}/${encodeURIComponent(t.id)}`, { method: 'DELETE' }), 'Deleted forever'); } }, 'Delete forever')))) : [h('p', {}, 'Nothing here.')]),
+      h('div', { class: 'sx-row' },
+        h('button', { class: 'sx-btn sm danger', disabled: busy || !picked.size, onclick: () => { if (confirm(`Delete ${picked.size} item(s) forever?`)) run(async () => { await sync.apiCall('/api/trash/delete', { method: 'POST', json: { items: [...picked].map((k) => { const [kind, ...id] = k.split(':'); return { kind, id: id.join(':') }; }) } }); picked.clear(); }, 'Deleted forever'); } }, 'Delete selected forever'),
+        h('button', { class: 'sx-btn sm danger', disabled: busy || !items.length, onclick: () => { if (confirm('Empty the server trash? This cannot be undone.')) run(() => sync.apiCall('/api/trash/empty', { method: 'POST' }), 'Trash emptied'); } }, 'Empty trash')));
   }
 
   function twofaCard() {
@@ -137,7 +153,7 @@ export function mountSyncSettings(el) {
     if (!alive) return;
     const f = document.activeElement;
     if (root.contains(f) && f.tagName === 'INPUT' && f.value && !busy) return; // do not clobber typing
-    root.replaceChildren(...(auth?.token ? [profile(), status(), devicesCard(), twofaCard(), e2eCard(), accountCard()] : [signedOut()]));
+    root.replaceChildren(...(auth?.token ? [profile(), status(), devicesCard(), trashCard(), twofaCard(), e2eCard(), accountCard()] : [signedOut()]));
   }
   const off = [on('sync:status', paint), on('auth:changed', load)];
   const tick = setInterval(() => { if (auth?.token && !busy) paint(); }, 15000);

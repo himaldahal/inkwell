@@ -9,6 +9,8 @@ import { withData } from './items.js';
 import { seedUrl } from './assets.js';
 import { icon } from './icons.js';
 import { getSetting } from '../core/settings.js';
+import { enabled } from './mods.js';
+import { fixBindings } from './connectors.js';
 import { pref, clamp } from './ui.js';
 import { createPenTool } from './tools/pen.js';
 import { createEraserTool } from './tools/eraser.js';
@@ -33,7 +35,7 @@ export const DRAW_TOOLS = ['pen', 'highlighter', 'pencil', 'shape'];
 
 export class Engine {
   constructor({ note, root, scroll, pagesEl, wrap, readOnly }) {
-    this.prefs = {}; this.readOnly = !!readOnly; this.opCbs = new Set(); this.presCbs = new Set(); this.peers = []; this._remote = false;
+    this.prefs = {}; this.grid = !!pref.get('grid', false); this.readOnly = !!readOnly; this.opCbs = new Set(); this.presCbs = new Set(); this.peers = []; this._remote = false;
     this.note = note; this.root = root; this.scroll = scroll; this.pagesEl = pagesEl; this.wrap = wrap;
     this.listeners = {};
     this.pvs = []; this.byEl = new Map();
@@ -81,6 +83,8 @@ export class Engine {
     R.style.setProperty('--ik-typing-font', this.typing.font || 'inherit'); R.style.setProperty('--ik-typing-size', this.typing.size + 'px');
     if (p.zoom === 'fit-width' && !this._fitSet) { this._fitSet = true; this.fit = true; }
   }
+  enabled(n) { return enabled(n); }
+  snapV(v) { return this.grid ? Math.round(v / 20) * 20 : v; }
   buzz(ms = 6) { if (this.prefs.haptics !== false) navigator.vibrate?.(ms); }
 
   // ---- events ----
@@ -345,6 +349,7 @@ export class Engine {
   undo() { this.endEdit(); this.tools[this.tool]?.cancel?.(); this.history.undo(); }
   redo() { this.endEdit(); this.history.redo(); }
   addStroke(pv, stroke, render = true) {
+    const bb = bboxOf(stroke); this.grow(pv, { x1: bb.x1, y1: bb.y1 });
     const m = this.audioMod;
     if (m) { try { const rec = m.getActiveRecorder(this.note.id); if (rec) m.stampStroke(stroke, rec); } catch { /* ignore */ } }
     const before = this.snap(pv);
@@ -362,6 +367,7 @@ export class Engine {
     const items = pv.page.items;
     for (let i = items.length - 1; i >= 0; i--) {
       if (items[i].deleted) continue;
+      if (items[i].type === 'frame') { const f = items[i], d = 14 / this.zoom; if (!(x >= f.x - d && x <= f.x + f.w + d && y >= f.y - d && y <= f.y + f.h + d) || (x > f.x + d && x < f.x + f.w - d && y > f.y + d && y < f.y + f.h - d)) continue; }
       const it = items[i], el = pv.items.querySelector(`[data-id="${it.id}"]`);
       const hh = it.type === 'text' && el ? Math.max(it.h, el.offsetHeight) : it.h;
       if (x >= it.x && x <= it.x + it.w && y >= it.y && y <= it.y + hh) return it;
@@ -475,6 +481,48 @@ export class Engine {
     return it;
   }
 
+  insertEmbed(info, pv = this.currentPv()) {
+    const c = this.visibleCenter(pv), w = info.kind === 'audio' ? 360 : info.kind === 'link' ? 340 : 480, hh = info.kind === 'audio' ? 90 : info.kind === 'link' ? 110 : 300;
+    this.addItem(pv, { id: newId(), type: 'embed', url: info.url, embedUrl: info.embedUrl, provider: info.provider, kind: info.kind, title: info.title, x: Math.max(0, c.x - w / 2), y: Math.max(0, c.y - hh / 2), w, h: hh, rotation: 0 });
+  }
+  insertFrame(title, box) {
+    const pv = this.currentPv(), c = this.visibleCenter(pv), b = box || { x0: c.x - 200, y0: c.y - 130, x1: c.x + 200, y1: c.y + 130 };
+    const it = withData({ id: newId(), type: 'frame', title: title || 'Frame', x: b.x0 - 24, y: b.y0 - 24, w: b.x1 - b.x0 + 48, h: b.y1 - b.y0 + 48, rotation: 0 });
+    const before = this.snap(pv); pv.page.items = [it, ...pv.page.items]; this.commit(pv, before); pv.renderItems();
+  }
+  addInfinitePage() {
+    const pg = { id: newId(), type: 'draw', width: 3600, height: 3600, infinite: true, bg: 'dot', strokes: [], items: [] };
+    const at = this.note.pages.length; this._structural(() => { this.note.pages.push(pg); });
+    this.opCbs.forEach((cb) => cb([{ type: 'page-add', pageId: pg.id, data: { ...pg, index: at } }]));
+    requestAnimationFrame(() => this.goToPage(at)); return pg;
+  }
+  /** infinite pages grow when content nears the right/bottom edge */
+  grow(pv, b) {
+    const pg = pv.page; if (!pg.infinite) return;
+    let ch = false;
+    while (b.x1 > pg.width - 300 && pg.width < 14000) { pg.width += 1200; ch = true; }
+    while (b.y1 > pg.height - 300 && pg.height < 14000) { pg.height += 1200; ch = true; }
+    if (ch) { pv.layout(this.zoom); pv.renderAll(); this.changed(pv, 'grow'); }
+  }
+  zoomToBox(pv, b) {
+    const w = b.x1 - b.x0, h = b.y1 - b.y0; if (w <= 0 || h <= 0) return;
+    const z = clamp(Math.min((this.scroll.clientWidth - 80) / w, (this.scroll.clientHeight - 160) / h), MIN_ZOOM, MAX_ZOOM);
+    this.fit = false; this.applyZoom(z, null, true);
+    const r = pv.el.getBoundingClientRect(), s = this.scroll.getBoundingClientRect();
+    this.scroll.scrollLeft += r.left + ((b.x0 + b.x1) / 2) * z - (s.left + s.width / 2);
+    this.scroll.scrollTop += r.top + ((b.y0 + b.y1) / 2) * z - (s.top + s.height / 2);
+  }
+  insertLibrary(entry) {
+    const pv = this.currentPv(), c = this.visibleCenter(pv), { instantiate } = this._libs || {};
+    const go = (inst) => {
+      const r = inst(entry, c.x - entry.w / 2, c.y - entry.h / 2), before = this.snap(pv), t = Date.now();
+      r.strokes.forEach((s) => { s.u = t; });
+      pv.page.strokes = [...pv.page.strokes, ...r.strokes]; pv.page.items = [...pv.page.items, ...r.items];
+      this.commit(pv, before); pv.renderInk(); pv.renderItems(); this.setTool('select'); this.tools.select.selectIds(pv, r.strokes.map((s) => s.id), r.items.map((i) => i.id));
+    };
+    if (instantiate) go(instantiate); else import('./libs.js').then((m) => { this._libs = m; go(m.instantiate); });
+  }
+  fixConnectors(pv) { const r = fixBindings(pv.page.strokes); if (r.updated.length) pv.page.strokes = r.list; return r.updated; }
   insertSticky(color = '#fde68a') {
     const pv = this.currentPv(), c = this.visibleCenter(pv);
     const it = this.insertTextBox(pv, c.x - 110, c.y - 100, '', '', { w: 220, h: 200, bg: color, sticky: true, color: '#1f2937' });
@@ -549,7 +597,21 @@ export class Engine {
       else set(this.note.pages[i], 'bg', tpl);
     });
   }
-  setPaper(color) { this._structural((set) => set(this.note, 'paperColor', color)); }
+  setPaper(color) { this.setPageStyle('all', { paper: color }); }
+  /** patch: {paper, paperGrad, pattern}; i = page index or 'all'. null clears a key. */
+  setPageStyle(i, patch) {
+    this._structural((set) => {
+      const all = i === 'all', targets = all ? this.note.pages : [this.note.pages[i]];
+      if (all && 'paper' in patch) set(this.note, 'paperColor', patch.paper === null ? null : patch.paper);
+      if (all && 'pattern' in patch) set(this.note, 'pattern', patch.pattern || undefined);
+      for (const t of targets) for (const k of Object.keys(patch)) {
+        if (all && k === 'paper') { set(t, 'paper', undefined); continue; }
+        if (all && k === 'pattern') { set(t, 'pattern', undefined); continue; }
+        set(t, k, patch[k] == null ? undefined : patch[k]);
+      }
+      if (all && 'paper' in patch) for (const t of targets) set(t, 'paperGrad', undefined);
+    });
+  }
   async setBgImage(i, file, fit = 'contain') {
     const pg = this.note.pages[i]; if (!pg) return;
     if (!file) return this._structural((set) => set(pg, 'bgImage', undefined));

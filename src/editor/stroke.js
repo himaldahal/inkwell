@@ -44,9 +44,48 @@ export function drawDot(ctx, s) {
   ctx.beginPath(); ctx.arc(s.pts[0], s.pts[1], w / 2, 0, 6.2832); ctx.fill(); ctx.globalAlpha = 1;
 }
 /** whole-path drawing (highlighter, shapes): one stroke() so alpha never double-darkens */
+function seeded(seed) { let a = (seed * 9301 + 49297) >>> 0; return () => ((a = (Math.imul(a, 1664525) + 1013904223) >>> 0) / 4294967296) - 0.5; }
+function subpaths(pts) { const out = []; let cur = []; for (let i = 0; i < pts.length; i += 3) { if (pts[i + 2] < 0 && cur.length) { out.push(cur); cur = []; } cur.push([pts[i], pts[i + 1]]); } if (cur.length) out.push(cur); return out; }
+function wobble(path, r, amp) {
+  const o = [];
+  for (let i = 0; i < path.length - 1; i++) {
+    const [ax, ay] = path[i], [bx, by] = path[i + 1], L = Math.hypot(bx - ax, by - ay), m = Math.max(1, Math.round(L / 28));
+    for (let j = 0; j < m; j++) { const t = j / m; o.push([ax + (bx - ax) * t + r() * amp, ay + (by - ay) * t + r() * amp]); }
+  }
+  const e = path[path.length - 1]; o.push([e[0] + r() * amp, e[1] + r() * amp]); return o;
+}
+/** hand-drawn look: seeded wobble, double stroke, hachure / cross-hatch / solid fills */
+function drawSketch(ctx, s) {
+  const subs = subpaths(s.pts), amp = Math.min(3.2, s.size * 0.5 + 1) * (s.rough ?? 1);
+  ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = s.color; ctx.lineWidth = s.size; ctx.globalAlpha = s.alpha ?? 1;
+  if (s.dash) ctx.setLineDash([s.size * 2.2, s.size * 2.2]);
+  const r = seeded(seedOf(s) + 11);
+  if (s.fill && CLOSED.has(s.shape) && subs[0]) {
+    const poly = wobble(subs[0], r, amp * 0.6), path = new Path2D();
+    poly.forEach(([x, y], i) => (i ? path.lineTo(x, y) : path.moveTo(x, y))); path.closePath();
+    const fs = s.fillStyle || 'hachure';
+    if (fs === 'solid') { ctx.fillStyle = s.fill; ctx.fill(path); }
+    else {
+      ctx.save(); ctx.clip(path); ctx.strokeStyle = s.fill; ctx.lineWidth = Math.max(1, s.size * 0.6); ctx.setLineDash([]);
+      let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9; for (const [x, y] of poly) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
+      const gap = Math.max(7, s.size * 3.2), span = x1 - x0 + (y1 - y0);
+      for (const dir of fs === 'cross' ? [1, -1] : [1]) {
+        ctx.beginPath();
+        for (let d = -span; d < span; d += gap) { const j = r() * 2; if (dir > 0) { ctx.moveTo(x0 + d + j, y1); ctx.lineTo(x0 + d + (y1 - y0) + j, y0); } else { ctx.moveTo(x1 - d + j, y1); ctx.lineTo(x1 - d - (y1 - y0) + j, y0); } }
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+  }
+  for (let pass = 0; pass < 2; pass++) for (const sp of subs) {
+    const w = wobble(sp, r, amp); ctx.beginPath(); w.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.stroke();
+  }
+  ctx.restore();
+}
 export function drawPath(ctx, s) {
   const pts = s.pts, n = pts.length / 3;
   if (n === 1) return drawDot(ctx, s);
+  if (s.sketch && s.shape) return drawSketch(ctx, s);
   ctx.strokeStyle = s.color; ctx.lineCap = s.chisel ? 'butt' : 'round'; ctx.lineJoin = s.chisel ? 'bevel' : 'round';
   ctx.lineWidth = s.size;
   ctx.globalAlpha = (s.tool === 'highlighter' ? HL_ALPHA : s.tool === 'pencil' ? 0.7 : 1) * (s.alpha ?? 1);

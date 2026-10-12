@@ -12,6 +12,8 @@ export function mountAdmin(el, { navigate = (p) => { location.hash = '#' + p; } 
   const root = h('div', { class: 'sx', style: { padding: '16px', maxWidth: '1100px', margin: '0 auto' } });
   el.replaceChildren(root);
   const TABS = [['overview', 'Overview'], ['users', 'Users'], ['shares', 'Shares & links'], ['abuse', 'Abuse'], ['mail', 'Mail'], ['storage', 'Storage & trash'], ['settings', 'Settings'], ['audit', 'Audit log'], ['health', 'System']];
+  const NEED = { overview: 'analytics.read', users: 'users.read', shares: 'shares.manage', abuse: 'abuse.manage', mail: 'mail.manage', storage: 'users.read', settings: 'settings.read', audit: 'audit.read', health: 'health.read' };
+  let perms = [], roleList = [];
   let tab = sessionStorage.getItem('admin-tab') || 'overview', content = h('div', { class: 'sx' }), alive = true;
 
   const table = (cols, rows) => h('div', { class: 'sx-tw' }, h('table', { class: 'sx-table' },
@@ -140,11 +142,11 @@ export function mountAdmin(el, { navigate = (p) => { location.hash = '#' + p; } 
     const [l2, mail] = field('E-mail (staff only can change)', { type: 'email', value: u.email });
     const [l3, sto] = field('Storage override (MB, blank = plan default)', { type: 'number', min: 0, value: u.storageMbOverride ?? '' });
     const [l4, nn] = field('Note limit override (blank = plan default)', { type: 'number', min: 0, value: u.maxNotesOverride ?? '' });
-    const staff = h('input', { type: 'checkbox', checked: u.isStaff });
+    const roleSel = h('select', { 'aria-label': 'Role', disabled: !perms.includes('roles.manage') }, roleList.map((r) => h('option', { value: r.name, selected: r.name === u.role }, r.name)));
     const body = h('div', { class: 'sx' }, h('div', { class: 'sx-row' }, avatarEl({ id: u.id, name: u.displayName || u.email }, 44), h('div', {}, h('b', {}, u.email), h('p', {}, `Joined ${new Date(u.dateJoined).toLocaleDateString()}, last sign-in ${ago(u.lastLogin)}`))),
-      l1, l2, l3, l4, h('label', { style: { display: 'flex', gap: '8px', flexDirection: 'row', alignItems: 'center' } }, staff, 'Administrator'),
+      l1, l2, l3, l4, h('label', {}, 'Role', roleSel),
       h('div', { class: 'sx-row' },
-        btn('Save', async () => { await A(`/users/${uid}`, { method: 'PATCH', json: { displayName: name.value, email: mail.value, storageMb: sto.value === '' ? null : +sto.value, maxNotes: nn.value === '' ? null : +nn.value, isStaff: staff.checked } }); toast('Saved'); m.close(); done?.(); }, 'primary'),
+        btn('Save', async () => { await A(`/users/${uid}`, { method: 'PATCH', json: { displayName: name.value, email: mail.value, storageMb: sto.value === '' ? null : +sto.value, maxNotes: nn.value === '' ? null : +nn.value, ...(perms.includes('roles.manage') && roleSel.value !== u.role ? { role: roleSel.value } : {}) } }); toast('Saved'); m.close(); done?.(); }, 'primary'),
         btn(u.isActive ? 'Disable' : 'Enable', async () => { await A(`/users/${uid}`, { method: 'PATCH', json: { isActive: !u.isActive } }); m.close(); done?.(); }),
         btn('Reset password', async () => { if (!confirm('Generate a temporary password and sign them out?')) return; const r = await post(`/users/${uid}/reset`, {}); prompt('Temporary password (shown once). They must change it at next sign-in:', r.tempPassword); done?.(); }),
         d.user.email ? btn('Send reset e-mail', async () => { await post(`/users/${uid}/send-reset`, {}); toast('Reset e-mail sent'); }) : null,
@@ -163,10 +165,10 @@ export function mountAdmin(el, { navigate = (p) => { location.hash = '#' + p; } 
     const [l1, mail] = field('E-mail', { type: 'email', required: true });
     const [l2, name] = field('Display name', { type: 'text' });
     const [l3, sto] = field('Storage (MB, blank = default)', { type: 'number', min: 0 });
-    const staff = h('input', { type: 'checkbox' });
-    const m = openModal({ title: 'New user', body: h('div', { class: 'sx' }, l1, l2, l3, h('label', { style: { display: 'flex', gap: '8px', flexDirection: 'row', alignItems: 'center' } }, staff, 'Administrator'), h('p', {}, 'A temporary password is generated. The user must change it at first sign-in.')),
+    const roleSel = h('select', { 'aria-label': 'Role', disabled: !perms.includes('roles.manage') }, roleList.map((r) => h('option', { value: r.name, selected: r.name === 'user' }, r.name)));
+    const m = openModal({ title: 'New user', body: h('div', { class: 'sx' }, l1, l2, l3, h('label', {}, 'Role', roleSel), h('p', {}, 'A temporary password is generated. The user must change it at first sign-in.')),
       actions: [{ label: 'Create', kind: 'primary', onClick: async () => {
-        try { const r = await post('/users', { email: mail.value, displayName: name.value, storageMb: sto.value === '' ? null : +sto.value, isStaff: staff.checked }); prompt('Temporary password (shown once):', r.tempPassword); done?.(); } catch (e) { toast(errText(e)); return false; } } }] });
+        try { const r = await post('/users', { email: mail.value, displayName: name.value, storageMb: sto.value === '' ? null : +sto.value, ...(perms.includes('roles.manage') && roleSel.value !== 'user' ? { role: roleSel.value } : {}) }); prompt('Temporary password (shown once):', r.tempPassword); done?.(); } catch (e) { toast(errText(e)); return false; } } }] });
   }
 
   function tabs(t) {
@@ -174,9 +176,19 @@ export function mountAdmin(el, { navigate = (p) => { location.hash = '#' + p; } 
     nav.querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.t === t)));
     show(views[t]);
   }
-  const nav = h('div', { class: 'sx-tabs', role: 'tablist' }, TABS.map(([k, l]) => h('button', { type: 'button', role: 'tab', 'data-t': k, 'aria-selected': String(k === tab), onclick: () => tabs(k) }, l)));
-  root.append(h('div', { class: 'sx-row', style: { justifyContent: 'space-between' } }, h('h2', {}, 'Admin'), h('button', { class: 'sx-btn sm', onclick: () => navigate('/') }, 'Back to library')), nav, content);
-  tabs(tab);
+  const nav = h('div', { class: 'sx-tabs', role: 'tablist' }, [].map(([k, l]) => h('button', { type: 'button', role: 'tab', 'data-t': k, 'aria-selected': String(k === tab), onclick: () => tabs(k) }, l)));
+  root.append(h('div', { class: 'sx-row', style: { justifyContent: 'space-between' } }, h('h2', {}, 'Admin'), h('div', { class: 'sx-row' },
+    h('a', { class: 'sx-btn sm', href: '#/system', style: { display: 'none' }, id: 'sx-sys-link' }, 'System panel'), h('button', { class: 'sx-btn sm', onclick: () => navigate('/') }, 'Back to library'))), nav, content);
+  (async () => {
+    try { const me = await sync.getAccountInfo(); perms = me?.user?.permissions || []; } catch { perms = (await sync.getMe())?.permissions || []; }
+    try { roleList = (await sync.apiCall('/api/system/roles')).roles; } catch { roleList = []; }
+    const allowed = TABS.filter(([k]) => perms.includes(NEED[k]));
+    if (!allowed.length) { content.replaceChildren(h('div', { class: 'sx-err' }, 'You do not have access to the admin dashboard.')); return; }
+    if (!allowed.some(([k]) => k === tab)) tab = allowed[0][0];
+    nav.replaceChildren(...allowed.map(([k, l]) => h('button', { type: 'button', role: 'tab', 'data-t': k, 'aria-selected': String(k === tab), onclick: () => tabs(k) }, l)));
+    if (perms.includes('system.read')) root.querySelector('#sx-sys-link').style.display = '';
+    tabs(tab);
+  })();
   return { destroy() { alive = false; root.remove(); } };
 }
 export default mountAdmin;

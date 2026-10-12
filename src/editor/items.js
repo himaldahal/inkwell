@@ -1,6 +1,7 @@
 // DOM rendering of page "items" (images, text boxes, stickers). Items live in a layer scaled by zoom.
 import { h } from '../core/utils.js';
 import { assetUrl } from './assets.js';
+import { liveEmbed } from './embeds.js';
 
 export function syncItems(pv) {
   const layer = pv.items, items = (pv.page.items || []).filter((i) => !i.deleted);
@@ -31,6 +32,24 @@ export function paintItem(el, it, pv) {
     if (img._aid !== it.assetId) {
       img._aid = it.assetId; img.removeAttribute('src'); el.classList.add('loading');
       assetUrl(it.assetId).then((u) => { if (img._aid === it.assetId && u) { img.src = u; el.classList.remove('loading'); } });
+    }
+  } else if (it.type === 'frame') {
+    el.classList.add('ik-frame');
+    let l = el.firstChild; if (!l) { l = h('div', { class: 'ik-frame-t' }); el.append(l); }
+    l.textContent = it.title || 'Frame';
+  } else if (it.type === 'embed') {
+    let c = el.firstChild; const key = it.embedUrl + '|' + it.title;
+    if (!c || c._key !== key) {
+      c = h('div', { class: 'ik-embed', 'data-kind': it.kind }); c._key = key; el.replaceChildren(c);
+      const body = h('div', { class: 'ik-embed-b' });
+      const open = () => h('a', { class: 'ik-embed-btn', href: it.url, target: '_blank', rel: 'noopener noreferrer', 'data-ik-ui': '' }, 'Open link');
+      if (it.kind === 'link') body.append(open());
+      else {
+        const load = h('button', { type: 'button', class: 'ik-embed-btn', 'data-ik-ui': '' }, navigator.onLine ? 'Load ' + (it.provider || 'embed') : 'Offline - tap to retry');
+        load.addEventListener('click', () => { if (!navigator.onLine) { load.textContent = 'You are offline'; return; } body.replaceChildren(liveEmbed(it)); c.classList.add('live'); });
+        body.append(load, h('small', {}, 'Nothing loads until you tap. Use the hand tool to interact.'));
+      }
+      c.append(h('div', { class: 'ik-embed-h' }, h('b', {}, it.provider || 'Link'), h('span', {}, it.title || it.url)), body);
     }
   } else if (it.type === 'sticker') {
     el.textContent = it.emoji || '⭐';

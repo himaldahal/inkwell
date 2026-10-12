@@ -9,7 +9,10 @@ import { mountSidebar, pageMenu } from './sidebar.js';
 import { mountTextLayer } from './textlayer.js';
 import { mountRuler } from './ruler.js';
 import { mountRefView } from './refview.js';
+import { renderNotePreviewSync } from './preview.js';
 import { paintPage } from './pages.js';
+import { enabled, optional } from './mods.js';
+import { parseEmbed } from './embeds.js';
 import { takeSnapshot, loadSnapshot, hashOf } from './versions.js';
 import { icon } from './icons.js';
 import { ibtn, popover, menu, closePopover, pref } from './ui.js';
@@ -18,8 +21,6 @@ import { clipboard } from './tools/select.js';
 import { getSetting } from '../core/settings.js';
 import { setAuthor } from './stroke.js';
 
-// optional modules owned by other agents; glob tolerates their absence at build time
-const OPT = { share: Object.values(import.meta.glob('../ui/share.js'))[0], activity: Object.values(import.meta.glob('../core/activity.js'))[0] };
 const PHONE_W = 720, WIDE_W = 900;
 const fmtTime = (s) => { s = Math.floor(s || 0); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
 function download(blob, name) {
@@ -77,27 +78,21 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
     if (lastPeers.length) engine.setPresence(lastPeers);
     engine.cursorEl = cursorEl;
     cleanup.push(() => engine.destroy());
-    OPT.activity?.().then((m) => Promise.resolve(m.currentAuthor?.()).then((a) => setAuthor(typeof a === 'string' ? a : a?.id))).catch(() => {});
+    optional.activity?.().then((m) => Promise.resolve(m.currentAuthor?.()).then((a) => setAuthor(typeof a === 'string' ? a : a?.id))).catch(() => {});
     const ruler = mountRuler(engine); cleanup.push(() => ruler.destroy());
 
     // ---------- save ----------
     let dirty = false, previewDirty = false, saving = Promise.resolve(), lastHash = hashOf(note), lastSnapHash = hashOf(note);
     const indexText = () => {
       const parts = [stripHtml(note.text || '')];
-      for (const p of note.pages) for (const it of p.items) if (!it.deleted && it.type === 'text') parts.push(it.text || stripHtml(it.html || ''));
+      for (const p of note.pages) { if (p.ocr) parts.push(p.ocr); for (const it of p.items) if (!it.deleted && it.type === 'text') parts.push(it.text || stripHtml(it.html || '')); }
       return parts.join('\n').replace(/\s+\n/g, '\n').trim();
     };
-    const makePreview = () => {
-      const pg = note.pages[0]; if (!pg) return null;
-      const W = 360, k = W / pg.width, c = document.createElement('canvas');
-      c.width = W; c.height = Math.max(1, Math.round(pg.height * k));
-      const ctx = c.getContext('2d'); ctx.scale(k, k);
-      paintPage(ctx, note, pg, { pdfCanvas: engine.pvs[0]?.cv.pdf });
-      try { return c.toDataURL('image/jpeg', 0.62); } catch { return null; }
-    };
+    const makePreview = () => renderNotePreviewSync(note, { w: 360, pdfCanvas: engine.pvs[0]?.cv.pdf });
     let baseText = note.text || '', baseTitle = note.title || '';
     const doSave = () => {
       if (readOnly || !dirty) { dirty = false; return saving; }
+      if (!note.pages[0]?.strokes.length && (note.text || '') && !previewDirty) previewDirty = true;
       baseText = note.text || ''; baseTitle = note.title || '';
       dirty = false;
       try {
@@ -109,6 +104,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
     };
     const save = debounce(doSave, 600);
     const touch = (page) => { dirty = true; if (!page || page === note.pages[0]) previewDirty = true; save(); };
+    const origTextChange = null; void origTextChange;
     engine.on('change', (d) => touch(d.page));
     cleanup.push(() => save.cancel());
     const flush = () => { save.cancel(); return doSave(); };
@@ -148,12 +144,13 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
     // ---------- text layer ----------
     let textOpT;
     const hooks = {
+      tts: enabled('tts'), goPage: (n) => engine.goToPage(n),
       transform: (a, root) => import('./transform.js').then((m) => m.textMenu(a, root, () => { note.text = root.innerHTML; dirty = true; save(); })),
       read: (a, root) => voiceRead(a, root),
       dictate: (b, root) => import('./voice.js').then((m) => m.toggleDictation(() => root, (on) => b.classList.toggle('rec', on))),
     };
     const textLayer = mountTextLayer(textHost, note, { hooks, onChange: () => {
-      dirty = true; save();
+      dirty = true; previewDirty = true; save();
       if (opCbs.size) { clearTimeout(textOpT); textOpT = setTimeout(() => opCbs.forEach((cb) => cb([{ type: 'text', pageId: null, data: note.text }])), 400); }
     } });
     engine.on('remoteText', (html) => { if (!textLayer.el.contains(document.activeElement)) { note.text = html; baseText = html; textLayer.setHtml(html); dirty = true; save(); } });
@@ -181,7 +178,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
     const tagBtn = ibtn('tag', 'Tags', (e, b) => tagsPop(b), 'nophone');
     const recBtn = ibtn('mic', 'Record audio', (e, b) => recClick(b), 'nophone');
     const expBtn = ibtn('file', 'Export as PDF', () => exportMenu(), 'nophone');
-    const shareBtn = ibtn('users', 'Share with people', () => (OPT.share?.() || Promise.reject()).then((m) => m.openShareDialog(note.id)).catch(() => toast('Sharing is not available')), 'nophone noro');
+    const shareBtn = ibtn('users', 'Share with people', () => (optional.share?.() || Promise.reject()).then((m) => m.openShareDialog(note.id)).catch(() => toast('Sharing is not available')), 'nophone noro');
     const avatars = h('div', { class: 'ik-avatars', 'aria-label': 'People in this note' });
     setAvatars = (peers) => {
       avatars.hidden = !peers.length; avatars.title = 'Who is editing';
@@ -236,6 +233,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       toggleRuler: () => { ruler.toggle(); tb.refresh(); },
       toggleOptions: () => root.classList.toggle('ik-opt-open'),
       sticky: (c) => engine.insertSticky(c),
+      library: (a) => import('./libs.js').then((m) => m.openLibrary(a, engine)),
       read: (a) => voiceRead(a, null),
       dictate: (b) => import('./voice.js').then((m) => m.toggleDictation(() => { if (!engine.editing) { const pv = engine.currentPv(), c = engine.visibleCenter(pv); engine.insertTextBox(pv, c.x - 140, c.y - 20); } return engine.editing?.t; }, (on) => b.classList.toggle('rec', on))),
       textColor: (c) => { const ed = engine.editing; if (!ed) return; const sel = getSelection(); if (sel && !sel.isCollapsed && ed.t.contains(sel.anchorNode)) engine.fmt('foreColor', c); else ed.t.style.color = c; },
@@ -313,7 +311,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       const ago = (t) => { const s = Math.max(0, (Date.now() - t) / 1000); return s < 60 ? 'just now' : s < 3600 ? Math.floor(s / 60) + 'm ago' : s < 86400 ? Math.floor(s / 3600) + 'h ago' : Math.floor(s / 86400) + 'd ago'; };
       const paint = async () => {
         let items = [];
-        try { const m = await OPT.activity?.(); items = (await m?.getActivity?.(note.id)) || []; } catch { /* optional */ }
+        try { const m = await optional.activity?.(); items = (await m?.getActivity?.(note.id)) || []; } catch { /* optional */ }
         list.replaceChildren(...(items.length ? items.slice(0, 60).map((a) => h('div', { class: 'ik-vrow' }, h('div', {},
           h('b', {}, a.text || a.summary || `${a.name || a.author || 'Someone'} ${a.action || a.type || 'edited'}${a.count ? ' ' + a.count : ''}${a.page ? ' on page ' + a.page : ''}`), h('small', {}, ago(a.at || a.t || a.ts || a.time || Date.now()))))) : [h('p', { class: 'ik-hint' }, 'No activity yet.')]));
       };
@@ -381,6 +379,11 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
         '-',
         { label: 'Page template / paper...', icon: 'bg', run: () => setTimeout(() => pageMenu(anchor, engine, engine.cur), 0) },
         { label: 'Pages panel', icon: 'sidebar', run: () => toggleSide() },
+        ...(enabled('toc') ? [{ label: 'Outline & contents', icon: 'list', run: () => setTimeout(() => outlinePop(anchor), 0) }] : []),
+        ...(enabled('embeds') ? [{ label: 'Embed a link (video, doc, map...)', icon: 'link', run: () => embedPrompt() }] : []),
+        ...(enabled('excalidraw') ? [{ label: 'New infinite canvas page', icon: 'layout', run: () => engine.addInfinitePage() }, { label: engine.grid ? 'Snap to grid: on' : 'Snap to grid: off', icon: 'bg', run: () => { engine.grid = !engine.grid; pref.set('grid', engine.grid); toast('Grid snap ' + (engine.grid ? 'on' : 'off')); } }] : []),
+        ...(enabled('ocr') ? [{ label: 'Recognize text on page', icon: 'type', run: () => runOcr(false) }] : []),
+        { label: 'Page title / bookmark...', icon: 'file', run: () => { const t = prompt('Page title (leave empty to clear)', note.pages[engine.cur].title || ''); if (t != null) engine.setPageStyle(engine.cur, { title: t || null, bookmark: t ? true : null }); } },
         { label: 'Fit width', icon: 'fit', run: () => engine.fitWidth() },
         { label: 'Focus mode (F)', icon: 'focus', run: () => toggleFocus(true) },
         { label: 'Present (fullscreen + laser)', icon: 'laser', run: () => { toggleFocus(true); engine.setTool('laser'); engine.fitWidth(); root.requestFullscreen?.().catch(() => {}); } },
@@ -396,6 +399,42 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       ], { align: 'end' });
     }
 
+    // ---------- outline / embeds / ocr ----------
+    function outlinePop(anchor) {
+      import('./toc.js').then((m) => m.openOutline(anchor, {
+        engine, note, ed: textLayer.el, toast,
+        goHeading: (i) => { setView(wide() ? 'split' : 'text'); setTimeout(() => textLayer.el.querySelector('#ik-h-' + i)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80); },
+        changed: () => { note.text = textLayer.el.innerHTML; dirty = previewDirty = true; save(); },
+        insert: () => { m.insertToc(note, textLayer.el); note.text = textLayer.el.innerHTML; dirty = previewDirty = true; save(); },
+      }));
+    }
+    function embedPrompt() {
+      const url = prompt('Paste a link: YouTube, Vimeo, Loom, Google Docs/Slides/Sheets, Figma, Maps, audio/video, or any web page');
+      if (!url) return; const info = parseEmbed(url);
+      if (!info) { toast('That is not a valid web link'); return; }
+      engine.insertEmbed(info);
+    }
+    async function runOcr(selOnly) {
+      if (!enabled('ocr')) return;
+      const mod = await optional.ocr?.();
+      if (!mod?.recognize) { toast('Text recognition is not available yet'); return; }
+      const sel = selOnly && engine.selection, pv = sel ? sel.pv : engine.currentPv(), pg = pv.page;
+      const box = sel ? engine.tools.select.box() : { x0: 0, y0: 0, x1: pg.width, y1: pg.height };
+      const k = Math.min(2, 1800 / Math.max(box.x1 - box.x0, box.y1 - box.y0)), c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round((box.x1 - box.x0) * k)); c.height = Math.max(1, Math.round((box.y1 - box.y0) * k));
+      const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height); ctx.scale(k, k); ctx.translate(-box.x0, -box.y0);
+      paintPage(ctx, note, pg, { pdfCanvas: pv.cv.pdf });
+      toast('Recognizing text...');
+      try {
+        const r = await mod.recognize(c, { lang: (navigator.language || 'en').slice(0, 2) });
+        const text = (typeof r === 'string' ? r : r?.text || '').trim();
+        if (!text) { toast('No text found'); return; }
+        pg.ocr = (pg.ocr ? pg.ocr + '\n' : '') + text; engine.changed(pv, 'ocr');
+        if (sel) engine.insertTextBox(pv, box.x0, box.y1 + 12, text.replace(/[&<>]/g, (m2) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m2])).replace(/\n/g, '<br>'), text);
+        else toast('Text added to search');
+      } catch (e) { console.warn(e); toast('Text recognition failed'); }
+    }
+    engine.on('ocr', (d) => runOcr(!!d?.selection));
     // ---------- read aloud ----------
     function pageText(i) { return note.pages[i].items.filter((x) => !x.deleted && x.type === 'text').map((x) => x.text || stripHtml(x.html || '')).join('. '); }
     function voiceRead(anchor, root) {
@@ -527,6 +566,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       if (files.length) { e.preventDefault(); files.forEach((f) => engine.insertImage(f)); return; }
       if (clipboard.data) { e.preventDefault(); sel().paste(); return; }
       const txt = e.clipboardData?.getData('text/plain');
+      if (txt && enabled('embeds') && /^https?:\/\/\S+$/.test(txt.trim())) { const info = parseEmbed(txt); if (info && info.kind !== 'link') { e.preventDefault(); engine.insertEmbed(info); return; } }
       if (txt && txt.trim()) {
         e.preventDefault(); const pv = engine.currentPv(), c = engine.visibleCenter(pv);
         const esc = (s) => s.replace(/[&<>]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m]));
