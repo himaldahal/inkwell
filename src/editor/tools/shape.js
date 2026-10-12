@@ -9,6 +9,7 @@ export function createShapeTool(engine) {
     down(pt) {
       pv = pt.pv; const c = engine.settings.shape; x0 = pt.x; y0 = pt.y; live = pv.ctx('live');
       s = { id: newId(), tool: 'pen', color: c.color, size: c.size, shape: c.kind, pts: shapePts(c.kind, x0, y0, x0, y0) };
+      if (c.fill) s.fill = c.fill; if (c.dash) s.dash = true; if ((c.alpha ?? 1) < 1) s.alpha = c.alpha;
     },
     move(pt) {
       if (!s) return;

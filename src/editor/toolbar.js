@@ -4,12 +4,13 @@ import { icon } from './icons.js';
 import { ibtn, pref, popover } from './ui.js';
 import { drawStroke } from './stroke.js';
 import { BRUSHES, FONTS } from './brushes.js';
+import { SHAPES } from './shapes.js';
+import { openColorPicker } from './colorpicker.js';
 
 const PALETTE = ['#111827', '#4f46e5', '#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#0891b2', '#9333ea', '#db2777', '#6b7280', '#ffffff'];
 const HL_PALETTE = ['#fde047', '#86efac', '#7dd3fc', '#f9a8d4', '#fdba74', '#c4b5fd', '#fca5a5'];
 const RANGE = { pen: [0.5, 24, 0.5], highlighter: [6, 50, 1], pencil: [0.5, 12, 0.5], shape: [0.5, 20, 0.5], eraser: [4, 60, 1] };
 const EMOJI = '😀 😂 😍 🤔 😎 😴 👍 👎 👏 🙏 💡 ⭐ ✅ ❌ ❗ ❓ 🔥 💯 🎯 📌 📎 📝 📚 🧠 ❤️ 💙 🟡 🟢 🔴 ➡️ ⬆️ ⚠️ 🎉 ☕ 🕐 📅 🔍 💬 🚀'.split(' ');
-const SHAPES = [['line', 'Line'], ['arrow', 'Arrow'], ['rect', 'Rectangle'], ['ellipse', 'Ellipse'], ['triangle', 'Triangle']];
 
 export function buildToolbar(engine, act) {
   const TOOLS = [
@@ -55,9 +56,13 @@ export function buildToolbar(engine, act) {
       b.addEventListener('click', () => set(col)); return b;
     };
     list.forEach((col) => row.append(mkSw(col)));
-    const custom = h('input', { type: 'color', class: 'ik-custom', value: /^#[0-9a-f]{6}$/i.test(c.color) ? c.color : '#000000', title: 'Custom color', 'aria-label': 'Custom color' });
-    custom.addEventListener('input', () => set(custom.value));
+    const custom = h('button', { type: 'button', class: 'ik-custom', title: 'Color picker (HSB / HEX / opacity)', 'aria-label': 'Custom color' });
+    custom.addEventListener('mousedown', (e) => e.preventDefault());
+    custom.addEventListener('click', () => openColorPicker(custom, { color: /^#[0-9a-f]{6}$/i.test(c.color) ? c.color : '#000000', alpha: c.alpha ?? 1, withAlpha: tool !== 'text',
+      onChange: (hex, a) => { if (engine.editing) act.textColor(hex); engine.settings[tool].color = hex; if (tool !== 'text') engine.settings[tool].alpha = a; engine.saveSettings(); swatchNow.style.background = hex; } }));
     row.append(custom);
+    const favs = pref.get('favcolors', []);
+    if (favs.length) { row.append(h('span', { class: 'ik-vsep' })); favs.slice(0, 6).forEach((col) => row.append(mkSw(col, 'recent'))); }
     const rec = engine.recent.filter((x) => !list.includes(x)).slice(0, 5);
     if (rec.length) { row.append(h('span', { class: 'ik-vsep' })); rec.forEach((col) => row.append(mkSw(col, 'recent'))); }
     return row;
@@ -81,22 +86,23 @@ export function buildToolbar(engine, act) {
     list.forEach((p, i) => {
       const b = h('button', { type: 'button', class: 'ik-preset', title: `${p.tool} ${p.size} (right-click to remove)`, 'aria-label': `Preset ${p.tool}` },
         h('span', { class: 'dot', style: { background: p.color, width: Math.min(20, 6 + p.size / 2) + 'px', height: Math.min(20, 6 + p.size / 2) + 'px', opacity: p.tool === 'highlighter' ? 0.6 : 1 } }));
-      b.addEventListener('click', () => { engine.setTool(p.tool); engine.set(p.tool, { color: p.color, size: p.size }); });
+      b.addEventListener('click', () => { engine.setTool(p.tool); engine.set(p.tool, { color: p.color, size: p.size, ...(p.brush ? { brush: p.brush } : {}), ...(p.stab != null ? { stab: p.stab } : {}), ...(p.alpha != null ? { alpha: p.alpha } : {}), ...(p.curve != null ? { curve: p.curve } : {}), ...(p.taper != null ? { taper: p.taper } : {}) }); });
       const rm = () => { list.splice(i, 1); pref.set('presets', list); render(); };
       b.addEventListener('contextmenu', (e) => { e.preventDefault(); rm(); });
       let lp; b.addEventListener('pointerdown', () => { lp = setTimeout(rm, 650); }); ['pointerup', 'pointerleave', 'pointercancel'].forEach((ev) => b.addEventListener(ev, () => clearTimeout(lp)));
       row.append(b);
     });
     row.append(ibtn('star', 'Save current pen as favorite', () => {
-      list.push({ tool, color: c.color, size: c.size }); pref.set('presets', list.slice(-8)); render();
+      list.push({ tool, color: c.color, size: c.size, brush: c.brush, stab: c.stab, alpha: c.alpha, curve: c.curve, taper: c.taper }); pref.set('presets', list.slice(-8)); render();
     }, 'sm'));
     return row;
   }
+  function hiBtn() { const b = ibtn(null, 'Highlight', () => engine.fmt('hiliteColor', '#fde68a'), 'sm'); b.append(h('b', { style: { background: '#fde68a', color: '#000', padding: '0 3px' } }, 'A')); return b; }
   function textRow() {
     const f = (cmd, ic, label, txt) => { const b = ibtn(null, label, () => engine.fmt(cmd), 'sm'); if (txt) b.append(h('b', {}, txt)); else b.append(icon(ic, 18)); return b; };
     return h('div', { class: 'ik-textfmt' },
       f('bold', null, 'Bold', 'B'), f('italic', null, 'Italic', 'I'), f('underline', null, 'Underline', 'U'), f('strikeThrough', null, 'Strikethrough', 'S'),
-      f('insertUnorderedList', 'list', 'Bulleted list'), f('justifyLeft', 'doc', 'Align left'), f('justifyCenter', null, 'Align center', '≡'), f('justifyRight', null, 'Align right', '▤'));
+      f('insertUnorderedList', 'list', 'Bulleted list'), f('insertOrderedList', 'olist', 'Numbered list'), hiBtn(), f('justifyLeft', 'doc', 'Align left'), f('justifyCenter', null, 'Align center', '≡'), f('justifyRight', null, 'Align right', '▤'));
   }
   function render() {
     const tool = engine.tool, c = engine.settings[tool];
@@ -106,17 +112,30 @@ export function buildToolbar(engine, act) {
     if (['pen', 'highlighter', 'pencil', 'shape'].includes(tool)) {
       if (sh) {
         const kinds = h('div', { class: 'ik-seg', role: 'radiogroup', 'aria-label': 'Shape' });
-        for (const [k, name] of SHAPES) kinds.append(h('button', { type: 'button', class: 'ik-segb' + (c.kind === k ? ' on' : ''), title: name, onclick: () => engine.set('shape', { kind: k }) }, name));
-        opts.append(kinds);
+        const shelf = h('select', { class: 'ik-ref-sel', 'aria-label': 'Shape', style: { flex: 'none', width: 'auto' } }, ...SHAPES.map(([k, name]) => h('option', { value: k }, name)));
+        shelf.value = c.kind; shelf.addEventListener('change', () => engine.set('shape', { kind: shelf.value }));
+        const quick = h('div', { class: 'ik-seg', role: 'radiogroup', 'aria-label': 'Quick shapes' });
+        for (const k of ['line', 'arrow', 'rect', 'ellipse', 'star']) quick.append(h('button', { type: 'button', class: 'ik-segb' + (c.kind === k ? ' on' : ''), title: k, onclick: () => engine.set('shape', { kind: k }) }, SHAPES.find((x) => x[0] === k)[1]));
+        const fillRow = h('div', { class: 'ik-colors', 'aria-label': 'Fill' }, h('span', { class: 'ik-hint' }, 'Fill'),
+          h('button', { type: 'button', class: 'ik-sw' + (!c.fill ? ' on' : ''), title: 'No fill', style: { background: 'linear-gradient(135deg,#fff 45%,#e11 46% 54%,#fff 55%)' }, onclick: () => engine.set('shape', { fill: null }) }),
+          ...PALETTE.slice(1, 9).map((col) => h('button', { type: 'button', class: 'ik-sw' + (c.fill === col ? ' on' : ''), style: { background: col }, title: 'Fill ' + col, onclick: () => engine.set('shape', { fill: col }) })));
+        const dash = h('label', { class: 'ik-check-l' }, h('input', { type: 'checkbox' }), 'Dashed');
+        dash.firstChild.checked = !!c.dash; dash.firstChild.addEventListener('change', (e) => engine.set('shape', { dash: e.target.checked }));
+        opts.append(quick, shelf, fillRow, dash);
       }
       if (tool === 'pen') {
         const sel = h('select', { class: 'ik-ref-sel', 'aria-label': 'Brush', style: { flex: 'none', width: 'auto' } }, ...BRUSHES.map(([id, n]) => h('option', { value: id }, n)));
         sel.value = c.brush || 'fine'; sel.addEventListener('change', () => engine.set('pen', { brush: sel.value }));
         const st = h('input', { type: 'range', min: 0, max: 0.9, step: 0.05, value: c.stab || 0, class: 'ik-range', title: 'Stabilizer', 'aria-label': 'Stabilizer', style: { width: '70px' } });
         st.addEventListener('input', () => engine.set('pen', { stab: +st.value }));
-        opts.append(sel, st);
+        const sl = (label, key, mn, mx, stp, dv) => { const r = h('input', { type: 'range', min: mn, max: mx, step: stp, value: c[key] ?? dv, class: 'ik-range', title: label, 'aria-label': label, style: { width: '70px' } }); r.addEventListener('input', () => engine.set('pen', { [key]: +r.value })); return h('label', { class: 'ik-check-l' }, label, r); };
+        opts.append(sel, h('label', { class: 'ik-check-l' }, 'Stabilizer', st), sl('Pressure', 'curve', 0.5, 2, 0.1, 1), sl('Taper', 'taper', 0, 0.5, 0.05, 0.2));
       }
       opts.append(colorRow(tool, c), sizeRow(tool, c));
+      if (tool === 'highlighter') {
+        const ch = h('label', { class: 'ik-check-l' }, h('input', { type: 'checkbox' }), 'Chisel tip');
+        ch.firstChild.checked = !!c.chisel; ch.firstChild.addEventListener('change', (e) => engine.set('highlighter', { chisel: e.target.checked })); opts.append(ch);
+      }
       if (tool === 'pen' || tool === 'highlighter') {
         const sn = h('label', { class: 'ik-check-l', title: 'Hold at the end of a stroke to snap lines and shapes' }, h('input', { type: 'checkbox', checked: c.snap ? '' : null }), 'Snap on hold');
         sn.firstChild.checked = !!c.snap; sn.firstChild.addEventListener('change', (e) => engine.set(tool, { snap: e.target.checked }));

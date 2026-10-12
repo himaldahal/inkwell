@@ -1,7 +1,7 @@
 // Extra pen brushes. A stroke keeps tool:'pen' (so other modules still render it) plus brush:'<id>'.
 export const BRUSHES = [
   ['fine', 'Fine'], ['ballpoint', 'Ballpoint'], ['fountain', 'Fountain'], ['brush', 'Brush'], ['marker', 'Marker'],
-  ['calligraphy', 'Calligraphy'], ['airbrush', 'Airbrush'], ['neon', 'Neon'], ['dashed', 'Dashed'], ['rainbow', 'Rainbow'],
+  ['calligraphy', 'Calligraphy'], ['airbrush', 'Airbrush'], ['neon', 'Neon'], ['dashed', 'Dashed'], ['rainbow', 'Rainbow'], ['watercolor', 'Watercolor'],
 ];
 export const FONTS = [
   ['Sans', 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'], ['Serif', 'Georgia, "Times New Roman", serif'],
@@ -21,10 +21,11 @@ export function drawBrushSeg(ctx, s, k, base) {
   switch (s.brush) {
     case 'ballpoint': w = z * (0.8 + 0.3 * pr); break;
     case 'fountain': w = z * (0.35 + 1.5 * pr * pr); break;
-    case 'brush': { const t = Math.min(k, n - 1 - k) / Math.max(4, n * 0.2); w = z * (0.2 + 1.8 * pr * pr) * Math.min(1, 0.25 + t); break; }
+    case 'brush': { const t = Math.min(k, n - 1 - k) / Math.max(4, n * (s.taper ?? 0.2)); w = z * (0.2 + 1.8 * pr * pr) * Math.min(1, 0.25 + t); break; }
     case 'marker': w = z * 1.4; alpha = 0.85; ctx.lineCap = 'square'; break;
     case 'calligraphy': { const a = Math.atan2(by - ay, bx - ax); w = z * (0.25 + 1.6 * Math.abs(Math.sin(a - 0.8))); break; }
     case 'airbrush': w = z * 1.6; alpha = 0.18; ctx.shadowColor = s.color; ctx.shadowBlur = z * 1.5; break;
+    case 'watercolor': w = z * 2.4; alpha = 0.13; ctx.shadowColor = s.color; ctx.shadowBlur = z; break;
     case 'neon': ctx.shadowColor = s.color; ctx.shadowBlur = z * 3; w = z; break;
     case 'dashed': ctx.setLineDash([z * 2, z * 2.6]); break;
     case 'rainbow': ctx.strokeStyle = `hsl(${(k * 9) % 360},85%,55%)`; break;

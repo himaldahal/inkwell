@@ -2,6 +2,7 @@
 // pts is a flat array [x,y,pressure, x,y,pressure, ...] in page units.
 import { newId } from '../core/utils.js';
 import { drawBrushSeg } from './brushes.js';
+import { buildShape, CLOSED } from './shapes.js';
 
 export const HL_ALPHA = 0.42;
 export const widthFor = (tool, size, p) =>
@@ -39,28 +40,30 @@ function plainSegment(ctx, s, k) {
 }
 export function drawDot(ctx, s) {
   const w = widthFor(s.tool, s.size, s.pts[2]);
-  ctx.fillStyle = s.color; ctx.globalAlpha = s.tool === 'pencil' ? 0.6 : s.tool === 'highlighter' ? HL_ALPHA : 1;
+  ctx.fillStyle = s.color; ctx.globalAlpha = (s.tool === 'pencil' ? 0.6 : s.tool === 'highlighter' ? HL_ALPHA : 1) * (s.alpha ?? 1);
   ctx.beginPath(); ctx.arc(s.pts[0], s.pts[1], w / 2, 0, 6.2832); ctx.fill(); ctx.globalAlpha = 1;
 }
 /** whole-path drawing (highlighter, shapes): one stroke() so alpha never double-darkens */
 export function drawPath(ctx, s) {
   const pts = s.pts, n = pts.length / 3;
   if (n === 1) return drawDot(ctx, s);
-  ctx.strokeStyle = s.color; ctx.lineCap = s.shape ? 'round' : 'round'; ctx.lineJoin = 'round';
-  ctx.lineWidth = s.tool === 'highlighter' ? s.size : s.size;
-  ctx.globalAlpha = s.tool === 'highlighter' ? HL_ALPHA : s.tool === 'pencil' ? 0.7 : 1;
+  ctx.strokeStyle = s.color; ctx.lineCap = s.chisel ? 'butt' : 'round'; ctx.lineJoin = s.chisel ? 'bevel' : 'round';
+  ctx.lineWidth = s.size;
+  ctx.globalAlpha = (s.tool === 'highlighter' ? HL_ALPHA : s.tool === 'pencil' ? 0.7 : 1) * (s.alpha ?? 1);
+  if (s.dash) ctx.setLineDash([s.size * 2.2, s.size * 2.2]);
   ctx.beginPath(); ctx.moveTo(pts[0], pts[1]);
-  if (s.shape) for (let i = 1; i < n; i++) ctx.lineTo(pts[i * 3], pts[i * 3 + 1]);
+  if (s.shape) for (let i = 1; i < n; i++) (pts[i * 3 + 2] < 0 ? ctx.moveTo(pts[i * 3], pts[i * 3 + 1]) : ctx.lineTo(pts[i * 3], pts[i * 3 + 1]));
   else {
     for (let i = 1; i < n - 1; i++) ctx.quadraticCurveTo(pts[i * 3], pts[i * 3 + 1], (pts[i * 3] + pts[i * 3 + 3]) / 2, (pts[i * 3 + 1] + pts[i * 3 + 4]) / 2);
     ctx.lineTo(pts[n * 3 - 3], pts[n * 3 - 2]);
   }
-  ctx.stroke(); ctx.globalAlpha = 1;
+  if (s.fill && CLOSED.has(s.shape)) { ctx.fillStyle = s.fill; ctx.fill(); }
+  ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
 }
 export function drawStroke(ctx, s) {
   const n = s.pts.length / 3; if (!n) return;
   if (n === 1) return drawDot(ctx, s);
-  if (s.tool === 'highlighter' || s.shape) return drawPath(ctx, s);
+  if (s.tool === 'highlighter' || s.shape || (s.alpha != null && s.alpha < 1 && s.tool !== 'pencil')) return drawPath(ctx, s);
   for (let k = 0; k < n; k++) drawSegment(ctx, s, k);
 }
 
@@ -89,7 +92,7 @@ export function strokeHit(s, x, y, r) {
   const b = bboxOf(s); if (x < b.x0 - r || x > b.x1 + r || y < b.y0 - r || y > b.y1 + r) return false;
   const p = s.pts, lim = r + (s.size || 2) / 2;
   if (p.length === 3) return Math.hypot(x - p[0], y - p[1]) <= lim;
-  for (let i = 0; i < p.length - 3; i += 3) if (distSeg(x, y, p[i], p[i + 1], p[i + 3], p[i + 4]) <= lim) return true;
+  for (let i = 0; i < p.length - 3; i += 3) if (p[i + 5] >= 0 && distSeg(x, y, p[i], p[i + 1], p[i + 3], p[i + 4]) <= lim) return true;
   return false;
 }
 export function polyContains(poly, x, y) {
@@ -114,7 +117,7 @@ export function eraseFromStroke(s, cx, cy, r) {
   const p = s.pts, n = p.length / 3, step = Math.max(r / 2, 1.5);
   const d = [];
   for (let i = 0; i < n; i++) {
-    if (i > 0) {
+    if (i > 0 && p[i * 3 + 2] >= 0) {
       const ax = p[i * 3 - 3], ay = p[i * 3 - 2], bx = p[i * 3], by = p[i * 3 + 1], L = Math.hypot(bx - ax, by - ay);
       const m = Math.floor(L / step);
       for (let j = 1; j <= m; j++) { const t = j / (m + 1); d.push([ax + (bx - ax) * t, ay + (by - ay) * t, p[i * 3 - 1] + (p[i * 3 + 2] - p[i * 3 - 1]) * t]); }
@@ -141,6 +144,8 @@ export function shapePts(kind, x1, y1, x2, y2, pr = 0.5) {
   else if (kind === 'ellipse') {
     const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2, rx = Math.abs(x2 - x1) / 2, ry = Math.abs(y2 - y1) / 2;
     for (let i = 0; i <= 72; i++) { const a = (i / 72) * 6.28319; add(cx + rx * Math.cos(a), cy + ry * Math.sin(a)); }
+  } else if (kind !== 'arrow') {
+    return buildShape(kind, x1, y1, x2, y2);
   } else if (kind === 'arrow') {
     const a = Math.atan2(y2 - y1, x2 - x1), L = Math.hypot(x2 - x1, y2 - y1), hl = Math.min(44, Math.max(14, L * 0.22));
     add(x1, y1); add(x2, y2);

@@ -4,7 +4,7 @@ import { drawSegment, drawDot, drawPath, drawStroke, recognizeShape, shapePts, w
 
 export function createPenTool(engine, kind) {
   let s = null, pv = null, ink = null, live = null, drawn = 0, snapped = false, latched = false;
-  let timer = 0, anchor = null, predBox = null, lastP = 0.5, stab = 0;
+  let pm = false, curve = 1, timer = 0, anchor = null, predBox = null, lastP = 0.5, stab = 0;
   const cfg = () => engine.settings[kind];
   const clearPred = () => {
     if (!predBox || !live) return;
@@ -12,7 +12,7 @@ export function createPenTool(engine, kind) {
   };
   const finishLive = () => { clearTimeout(timer); clearPred(); if (pv) { pv.clearLive(); pv.cv.live.classList.remove('hl'); } };
   const redrawActive = () => {
-    if (kind === 'highlighter') { pv.clearLive(); drawPath(live, s); }
+    if (pm) { pv.clearLive(); drawPath(live, s); }
     else { pv.renderInk(); drawStroke(ink, s); }
   };
   function snapShape() {
@@ -29,12 +29,16 @@ export function createPenTool(engine, kind) {
       latched = false;
       if (engine.ruler?.on) { engine.applyRuler(pt); latched = !!pt.snapped; }
       s = { id: newId(), tool: kind, color: c.color, size: c.size, pts: [pt.x, pt.y, pt.p] };
+      pm = kind === 'highlighter' || (c.alpha ?? 1) < 1; curve = c.curve || 1;
+      if ((c.alpha ?? 1) < 1) s.alpha = c.alpha;
+      if (kind === 'highlighter' && c.chisel) s.chisel = true;
+      if (c.taper != null && kind === 'pen') s.taper = c.taper;
       if (kind === 'pen' && c.brush && c.brush !== 'fine') s.brush = c.brush;
       stab = c.stab || 0;
       lastP = pt.p; snapped = false; drawn = 0; predBox = null;
       ink = pv.ctx('ink'); live = pv.ctx('live');
       anchor = pt;
-      if (kind === 'highlighter') { pv.cv.live.classList.add('hl'); drawDot(live, s); }
+      if (pm) { if (kind === 'highlighter') pv.cv.live.classList.add('hl'); drawDot(live, s); }
       else if (kind === 'pen') drawDot(ink, s);
     },
     move(pt) {
@@ -50,10 +54,11 @@ export function createPenTool(engine, kind) {
       if (stab > 0) { pt.x = s.pts[n - 3] + (pt.x - s.pts[n - 3]) * (1 - stab); pt.y = s.pts[n - 2] + (pt.y - s.pts[n - 2]) * (1 - stab); }
       const minD = 1 / engine.zoom;
       if (Math.hypot(pt.x - s.pts[n - 3], pt.y - s.pts[n - 2]) < minD) return;
+      if (curve !== 1 && pt.type !== 'mouse') pt.p = Math.pow(pt.p, curve);
       lastP = lastP * 0.55 + pt.p * 0.45;
       s.pts.push(pt.x, pt.y, lastP);
       const m = s.pts.length / 3;
-      if (kind === 'highlighter') { clearPred(); pv.clearLive(); drawPath(live, s); }
+      if (pm) { clearPred(); pv.clearLive(); drawPath(live, s); }
       else { while (drawn <= m - 2) drawSegment(ink, s, drawn++); }
       if (Math.hypot(pt.cx - anchor.cx, pt.cy - anchor.cy) > 5) {
         anchor = pt; clearTimeout(timer);
@@ -61,7 +66,7 @@ export function createPenTool(engine, kind) {
       }
     },
     predict(ps) {
-      if (!s || snapped || kind === 'highlighter') return;
+      if (!s || snapped || pm) return;
       clearPred();
       if (!ps.length) return;
       const n = s.pts.length; let x = s.pts[n - 3], y = s.pts[n - 2];
@@ -78,13 +83,13 @@ export function createPenTool(engine, kind) {
       if (!s) return;
       clearTimeout(timer); clearPred();
       const st = s; s = null;
-      if (!snapped && kind !== 'highlighter') {
+      if (!snapped && !pm) {
         const m = st.pts.length / 3;
         if (m === 1 && kind === 'pencil') drawDot(ink, st);
         while (drawn < m && m > 1) drawSegment(ink, st, drawn++);
       }
       st.pts = st.pts.map((v, i) => (i % 3 === 2 ? Math.round(v * 100) / 100 : Math.round(v * 100) / 100));
-      const hl = kind === 'highlighter';
+      const hl = pm;
       engine.addStroke(pv, st, hl);
       if (hl) finishLive();
       engine.useColor(st.color);
