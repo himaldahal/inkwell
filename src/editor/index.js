@@ -144,7 +144,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
     // ---------- text layer ----------
     let textOpT;
     const hooks = {
-      tts: enabled('tts'), goPage: (n) => engine.goToPage(n),
+      tts: enabled('tts'), dictation: enabled('dictation'), goPage: (n) => engine.goToPage(n),
       transform: (a, root) => import('./transform.js').then((m) => m.textMenu(a, root, () => { note.text = root.innerHTML; dirty = true; save(); })),
       read: (a, root) => voiceRead(a, root),
       dictate: (b, root) => import('./voice.js').then((m) => m.toggleDictation(() => root, (on) => b.classList.toggle('rec', on))),

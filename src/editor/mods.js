@@ -2,7 +2,8 @@
 const load = Object.values(import.meta.glob('../core/modules.js'))[0];
 let reg = null;
 if (load) load().then((m) => { reg = m; }).catch(() => {});
-export const enabled = (name) => { try { return reg?.isEnabled ? reg.isEnabled(name) !== false : true; } catch { return true; } };
+const ALIAS = { excalidraw: 'sketch' };
+export const enabled = (name) => { try { return reg?.isEnabled ? reg.isEnabled(ALIAS[name] || name) !== false : true; } catch { return true; } };
 export const optional = {
   ocr: Object.values(import.meta.glob('../features/ocr/index.js'))[0],
   share: Object.values(import.meta.glob('../ui/share.js'))[0],

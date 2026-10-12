@@ -107,7 +107,7 @@ export function buildToolbar(engine, act) {
     const f = (cmd, ic, label, txt) => { const b = ibtn(null, label, () => engine.fmt(cmd), 'sm'); if (txt) b.append(h('b', {}, txt)); else b.append(icon(ic, 18)); return b; };
     return h('div', { class: 'ik-textfmt' },
       f('bold', null, 'Bold', 'B'), f('italic', null, 'Italic', 'I'), f('underline', null, 'Underline', 'U'), f('strikeThrough', null, 'Strikethrough', 'S'),
-      ...(enabled('tts') ? [ibtn('volume', 'Read aloud', (e, b) => act.read(b), 'sm'), ibtn('mic', 'Dictate', (e, b) => act.dictate(b), 'sm')] : []),
+      ...(enabled('tts') ? [ibtn('volume', 'Read aloud', (e, b) => act.read(b), 'sm')] : []), ...(enabled('dictation') ? [ibtn('mic', 'Dictate', (e, b) => act.dictate(b), 'sm')] : []),
       f('insertUnorderedList', 'list', 'Bulleted list'), f('insertOrderedList', 'olist', 'Numbered list'), hiBtn(), f('justifyLeft', 'doc', 'Align left'), f('justifyCenter', null, 'Align center', '≡'), f('justifyRight', null, 'Align right', '▤'));
   }
   function render() {

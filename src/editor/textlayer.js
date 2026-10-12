@@ -61,7 +61,8 @@ export function mountTextLayer(host, note, { onChange, hooks = {} }) {
     mk('search', 'Find', toggleFind),
     h('span', { class: 'ik-vsep' }),
     mk('wand', 'Transform text', (e) => hooks.transform?.(e.currentTarget, ed)),
-    ...(hooks.tts !== false ? [mk('volume', 'Read aloud', (e) => hooks.read?.(e.currentTarget, ed)), mk('mic', 'Dictate', (e) => hooks.dictate?.(e.currentTarget, ed))] : []));
+    ...(hooks.tts !== false ? [mk('volume', 'Read aloud', (e) => hooks.read?.(e.currentTarget, ed))] : []),
+    ...(hooks.dictation !== false ? [mk('mic', 'Dictate', (e) => hooks.dictate?.(e.currentTarget, ed))] : []));
   function refresh() { for (const [b, st] of btns) { let on = false; try { on = !!st?.(); } catch { /* ignore */ } b.classList.toggle('on', on); } }
 
   ed.addEventListener('input', sync);
