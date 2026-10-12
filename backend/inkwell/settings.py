@@ -3,6 +3,7 @@ or a `.env` file next to manage.py (see .env.example)."""
 import logging
 import os
 import secrets
+import sys
 from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
@@ -56,20 +57,9 @@ def _secret_key():
     key = env("SECRET_KEY")
     if key:
         return key
-    if DEBUG:
+    if DEBUG or "test" in sys.argv[:2]:
         return "insecure-dev-key-inkwell"
-    # Convenience for first boot on shared hosting: generate once and persist.
-    f = BASE_DIR / ".secret_key"
-    try:
-        if f.is_file():
-            return f.read_text().strip()
-        key = secrets.token_urlsafe(60)
-        f.write_text(key)
-        logging.getLogger(__name__).warning("SECRET_KEY not set; generated %s", f)
-        return key
-    except OSError:
-        logging.getLogger(__name__).warning("SECRET_KEY not set and not writable; using an ephemeral key")
-        return secrets.token_urlsafe(60)
+    raise ImproperlyConfigured("SECRET_KEY is not set. Put a long random value in backend/.env (see .env.example).")
 
 
 SECRET_KEY = _secret_key()
@@ -117,9 +107,24 @@ PULL_MAX_BYTES = env_int("PULL_MAX_MB", 8) * 1024 * 1024
 RATE_LIMIT_AUTH = env_int("RATE_LIMIT_AUTH", 20)        # login/register attempts per minute per IP
 RATE_LIMIT_API = env_int("RATE_LIMIT_API", 600)         # authenticated requests per minute per token
 CORS_ALLOWED_ORIGINS = env_list("CORS_ALLOWED_ORIGINS")  # '*' allowed (token auth, no cookies)
-TRUST_PROXY = env_bool("TRUST_PROXY", False)
+TRUST_PROXY = env_bool("TRUST_PROXY", False)  # scheme only (X-Forwarded-Proto); client IPs use TRUSTED_PROXIES
+TRUSTED_PROXIES = env_list("TRUSTED_PROXIES")  # IPs whose X-Forwarded-For is believed; '*' = any (only behind a proxy you control)
+TRASH_RETENTION_DAYS = env_int("TRASH_RETENTION_DAYS", 30)
+LONGPOLL = env_bool("LONGPOLL", False)
+LONGPOLL_MAX_SECONDS = env_int("LONGPOLL_MAX_SECONDS", 20)
+STUN_URLS = env_list("STUN_URLS", "stun:stun.l.google.com:19302")
+TURN_URL = env("TURN_URL", "")
+TURN_USERNAME = env("TURN_USERNAME", "")
+TURN_CREDENTIAL = env("TURN_CREDENTIAL", "")
+TURN_SECRET = env("TURN_SECRET", "")  # shared secret for ephemeral (HMAC) TURN credentials
+MAIL_PER_RECIPIENT_HOURLY = env_int("MAIL_PER_RECIPIENT_HOURLY", 5)
+MAIL_PER_IP_HOURLY = env_int("MAIL_PER_IP_HOURLY", 20)
+MAIL_GLOBAL_HOURLY = env_int("MAIL_GLOBAL_HOURLY", 200)
+LOCKOUT_AFTER = env_int("LOCKOUT_AFTER", 5)
 
 # ---- Apps -------------------------------------------------------------------
+AUTH_USER_MODEL = "api.User"
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -207,7 +212,7 @@ else:
     CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache", "LOCATION": "inkwell"}}
 
 AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 8}},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator", "OPTIONS": {"min_length": 10}},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]

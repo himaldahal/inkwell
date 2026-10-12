@@ -1,6 +1,7 @@
 """Ownership and sharing rules. Every Record belongs to `user` (the owner); other users reach it only via a Share."""
 from django.db import transaction
 from django.db.models import F, Q
+from django.utils import timezone
 
 from .models import Record, SeqCounter, Share
 
@@ -12,6 +13,10 @@ def _best(roles):
     if "editor" in roles:
         return "editor"
     return "viewer" if roles else None
+
+
+def _live(qs):
+    return qs.filter(Q(expires_at__isnull=True) | Q(expires_at__gt=timezone.now()))
 
 
 def role_for(user, owner_id, kind, rid, parent_id=None):
@@ -30,12 +35,12 @@ def role_for(user, owner_id, kind, rid, parent_id=None):
             parent_id = ex.parent_id if ex else ""
         if parent_id:
             q |= Q(kind="notebooks", record_id=parent_id)
-    return _best(Share.objects.filter(owner_id=owner_id, recipient=user).filter(q).values_list("role", flat=True))
+    return _best(_live(Share.objects.filter(owner_id=owner_id, recipient=user)).filter(q).values_list("role", flat=True))
 
 
 def visible_q(user):
     q = Q(user=user)
-    for s in Share.objects.filter(recipient=user):
+    for s in _live(Share.objects.filter(recipient=user)):
         o = s.owner_id
         if s.kind == "notes":
             q |= Q(user_id=o, kind="notes", record_id=s.record_id) | Q(user_id=o, kind="assets", parent_id=s.record_id)
@@ -75,5 +80,24 @@ def bump(owner_id, kind, rid):
 def shares_signature(user):
     from django.db.models import Count, Max
 
-    a = Share.objects.filter(recipient=user).aggregate(n=Count("id"), m=Max("id"))
+    a = _live(Share.objects.filter(recipient=user)).aggregate(n=Count("id"), m=Max("id"))
     return f"{a['n']}.{a['m'] or 0}"
+
+
+def related(a, b):
+    """True when a may see b's public profile (self, staff, or any live share between them)."""
+    if a.pk == b.pk or a.is_staff:
+        return True
+    return _live(Share.objects.filter(Q(owner=a, recipient=b) | Q(owner=b, recipient=a))).exists()
+
+
+def claim_invites(user):
+    """Turn invitations sent to this e-mail before sign-up into real shares."""
+    from .models import PendingInvite, UserBlock
+
+    for inv in list(PendingInvite.objects.filter(email=user.email)):
+        if not UserBlock.objects.filter(blocker=user, blocked=inv.owner).exists():
+            Share.objects.get_or_create(owner=inv.owner, recipient=user, kind=inv.kind, record_id=inv.record_id,
+                                        defaults={"role": inv.role})
+            bump(inv.owner_id, inv.kind, inv.record_id)
+        inv.delete()

@@ -11,11 +11,12 @@ from django.http import FileResponse, Http404, HttpResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
+from . import runtime
 from .models import PublicAsset, PublicLink
 from .util import client_ip, hit
 from .views_share import _public_dir
 
-CSP = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
+CSP_T = "default-src 'none'; img-src 'self'; style-src 'nonce-{nonce}'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
 COOKIE_AGE = 6 * 3600
 
 STYLE = """
@@ -34,12 +35,16 @@ input[type=password]{padding:12px;border-radius:10px;border:1px solid var(--mute
 
 
 def _page(body, status=200, title="Inkwell"):
+    import secrets as _s
+
+    nonce = _s.token_urlsafe(12)
     html = (f'<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
             f'<meta name="robots" content="noindex,nofollow,noarchive"><meta name="referrer" content="no-referrer">'
-            f'<title>{escape(title)}</title><style>{STYLE}</style></head><body>{body}</body></html>')
+            f'<title>{escape(title)}</title><style nonce="{nonce}">{STYLE}</style></head><body>{body}</body></html>')
     r = HttpResponse(html, status=status, content_type="text/html; charset=utf-8")
-    r["Content-Security-Policy"] = CSP
+    r["Content-Security-Policy"] = CSP_T.replace("{nonce}", nonce)
     r["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    r["X-Frame-Options"] = "DENY"
     r["Referrer-Policy"] = "no-referrer"
     r["Cache-Control"] = "private, no-store"
     return r
@@ -50,12 +55,22 @@ def _gone(msg, status):
 
 
 def _get(token):
-    link = PublicLink.objects.filter(token=token).first()
-    if not link or link.revoked:
+    link = PublicLink.by_token(token)
+    if not link or link.revoked or link.visibility == "private" or link.kind != "notes":
         return None, _gone("This link is not available", 404)
     if link.expires_at and link.expires_at <= timezone.now():
         return None, _gone("This link has expired", 410)
     return link, None
+
+
+def _needs_login(link):
+    """Anonymous viewing only for visibility=public and when the server allows it."""
+    return link.visibility != "public" or not runtime.anonymous_links_allowed()
+
+
+def _login_shell(link):
+    return _page(f'<main><form action="/" method="get"><h1>Sign in to view</h1><p class="brand">This note is shared with signed-in members only.</p>'
+                 f'<a class="btn" href="/#/s/{escape(link.token)}">Open in Inkwell</a></form></main>', 200)
 
 
 def _cookie_name(link):
@@ -88,6 +103,8 @@ def public_view(request, token):
     link, bad = _get(token)
     if bad:
         return bad
+    if _needs_login(link):
+        return _login_shell(link)
     if link.password_hash and not _authorized(request, link):
         if request.method == "POST":
             if not hit(f"pubpw:{ip}:{link.pk}", settings.PUBLIC_PASSWORD_ATTEMPTS, 600):
@@ -112,7 +129,9 @@ def _render(request, link):
         f'<div class="page"><img src="/s/{escape(link.token)}/a/{escape(p["key"])}" alt="Page {i + 1}" loading="lazy"'
         + (f' width="{p["w"]}" height="{p["h"]}"' if p.get("w") and p.get("h") else "") + "></div>"
         for i, p in enumerate(pages) if p["key"] in keys)
-    dl = f'<a class="btn" href="/s/{escape(link.token)}/pdf" download>Download PDF</a>' if link.allow_download and "pdf" in keys else ""
+    edit = f'<a class="btn" href="/#/s/{escape(link.token)}">Open in Inkwell to edit</a>' if link.permission == "write" else ""
+    pdf = f'<a class="btn" href="/s/{escape(link.token)}/pdf" download>Download PDF</a>' if link.allow_download and "pdf" in keys else ""
+    dl = edit + pdf
     text = f'<section class="text">{link.text_html}</section>' if link.text_html.strip() else ""
     body = (f'<main><header><h1>{escape(link.title or "Untitled")}</h1>{dl}</header>{imgs}{text}'
             f'<p class="brand" style="margin-top:32px">Shared with Inkwell</p></main>')
@@ -125,7 +144,7 @@ def public_asset(request, token, key):
     link, bad = _get(token)
     if bad:
         return bad
-    if not _authorized(request, link):
+    if _needs_login(link) or not _authorized(request, link):
         return _gone("Not available", 401)
     a = PublicAsset.objects.filter(link=link, key=key).first()
     f = _public_dir(link) / key

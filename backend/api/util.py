@@ -16,25 +16,47 @@ def err(msg, status=400, **extra):
 
 
 def client_ip(request):
-    if settings.TRUST_PROXY:
+    """Client address. X-Forwarded-For is honoured only when the direct peer is in TRUSTED_PROXIES."""
+    ra = request.META.get("REMOTE_ADDR", "0.0.0.0")
+    trusted = settings.TRUSTED_PROXIES
+    if trusted and ("*" in trusted or ra in trusted):
         xff = request.META.get("HTTP_X_FORWARDED_FOR")
         if xff:
-            return xff.split(",")[0].strip()
-    return request.META.get("REMOTE_ADDR", "0.0.0.0")
+            hops = [x.strip() for x in xff.split(",") if x.strip()]
+            for h in reversed(hops):  # right-most hop that is not one of our proxies
+                if h not in trusted:
+                    return h[:45]
+            return hops[0][:45]
+    return ra[:45]
 
 
-def hit(key, limit, window):
-    """Fixed-window counter. Returns True while under the limit."""
+def hit(key, limit, window, db=True):
+    """Fixed-window counter; True while under the limit. DB-backed (works on shared hosting, shared
+    across workers). db=False uses the local cache (cheap, used for the per-request API limit)."""
     if not limit:
         return True
-    k = f"rl:{key}:{int(time.time() // window)}"
-    if cache.add(k, 1, window + 5):
-        return True
-    try:
-        return cache.incr(k) <= limit
-    except ValueError:
-        cache.set(k, 1, window + 5)
-        return True
+    w = int(time.time() // window)
+    if not db:
+        k = f"rl:{key}:{w}"
+        if cache.add(k, 1, window + 5):
+            return True
+        try:
+            return cache.incr(k) <= limit
+        except ValueError:
+            cache.set(k, 1, window + 5)
+            return True
+    from django.db import transaction
+    from django.db.models import F
+
+    from .models import RateBucket
+
+    with transaction.atomic():
+        b, _ = RateBucket.objects.get_or_create(key=key[:190], window=w, defaults={"count": 0, "expires": int(time.time()) + 2 * window})
+        RateBucket.objects.filter(pk=b.pk).update(count=F("count") + 1)
+        b.refresh_from_db()
+    if cache.add("rl:gc", 1, 3600):  # lazy cleanup, no cron needed
+        RateBucket.objects.filter(expires__lt=int(time.time())).delete()
+    return b.count <= limit
 
 
 def parse_json(request):
@@ -93,7 +115,7 @@ def api(methods=("GET",), auth=True, staff=False, pw_ok=False):
                 t = authenticate(request)
                 if not t:
                     return err("unauthorized", 401)
-                if not hit(f"tok:{t.pk}", settings.RATE_LIMIT_API, 60):
+                if not hit(f"tok:{t.pk}", settings.RATE_LIMIT_API, 60, db=False):
                     return err("rate limited", 429)
                 request.user, request.token = t.user, t
                 if staff and not t.user.is_staff:
@@ -108,3 +130,36 @@ def api(methods=("GET",), auth=True, staff=False, pw_ok=False):
         return wrapper
 
     return deco
+
+
+def enc_cursor(user, seq):
+    """Opaque, signed pagination cursor (hides the global counter)."""
+    from django.core import signing
+
+    return signing.dumps(int(seq), salt=f"cursor:{user.pk}", compress=False)
+
+
+def dec_cursor(user, value):
+    from django.core import signing
+
+    if value in (None, "", "0", 0):
+        return 0
+    try:
+        return int(signing.loads(str(value), salt=f"cursor:{user.pk}"))
+    except (signing.BadSignature, ValueError):
+        raise ValueError("bad cursor")
+
+
+def public_user(u):
+    """What other users may see about someone: never e-mail, never IP."""
+    return {"id": u.public_id, "name": u.display, "avatar": avatar_of(u)}
+
+
+def avatar_of(u):
+    p = getattr(u, "profile", None)
+    try:
+        from .models import Profile
+
+        return Profile.of(u).avatar_id or None
+    except Exception:  # noqa: BLE001
+        return None

@@ -1,3 +1,4 @@
+import os
 import secrets
 import shutil
 
@@ -7,59 +8,64 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.core.validators import validate_email
 from django.db import transaction
-from django.http import JsonResponse
+from django.http import FileResponse, JsonResponse
 from django.utils import timezone
 
-from . import emails, quota
+from . import access, emails, quota, runtime, security, totp, validate
 from .audit import audit
-from .models import AssetBlob, Device, EmailToken, Profile, Record, Token, now_ms
-from .util import api, client_ip, err, hit, parse_json
+from .models import AssetBlob, Device, EmailToken, Profile, Record, Token, hash_key, new_uid, now_ms
+from .useragent import parse_ua
+from .util import api, client_ip, err, hit, parse_json, public_user
 
 User = get_user_model()
 
 
 def registration_open():
-    return bool(settings.ALLOW_REGISTRATION)
+    return runtime.registration_open()
 
 
 @api(("GET",), auth=False)
 def config(request):
     return JsonResponse({
-        "mode": settings.DEPLOYMENT_MODE,
-        "registrationOpen": registration_open(),
-        "smtp": settings.SMTP_ENABLED,
-        "emailVerification": settings.REQUIRE_EMAIL_VERIFICATION,
-        "passwordReset": settings.SMTP_ENABLED,
-        "features": {"sharing": True, "publicLinks": True, "e2e": True, "admin": True},
-        "limits": {"assetMaxBytes": settings.ASSET_MAX_BYTES},
-        "serverTime": now_ms(),
+        "mode": settings.DEPLOYMENT_MODE, "registrationOpen": registration_open(), "smtp": settings.SMTP_ENABLED,
+        "emailVerification": settings.REQUIRE_EMAIL_VERIFICATION, "passwordReset": settings.SMTP_ENABLED,
+        "features": {"sharing": True, "publicLinks": True, "e2e": True, "admin": True, "presence": True, "longPoll": settings.LONGPOLL,
+                     "p2p": bool(settings.TURN_URL), "anonymousLinks": runtime.anonymous_links_allowed()},
+        "limits": {"assetMaxBytes": settings.ASSET_MAX_BYTES}, "serverTime": now_ms(),
     })
 
 
 def _device_for(request, user, body):
     did = str(body.get("deviceId") or "")[:64]
-    if not did:
-        return None
-    name = str(body.get("deviceName") or "")[:120]
-    dev, _ = Device.objects.get_or_create(user=user, device_id=did)
-    if name:
-        dev.name = name
-    dev.user_agent = request.headers.get("User-Agent", "")[:250]
+    if not did or not validate.ID_RE.match(did):
+        return None, False
+    dev, created = Device.objects.get_or_create(user=user, device_id=did)
+    dev.name = str(body.get("deviceName") or dev.name)[:120]
+    ua = request.headers.get("User-Agent", "")[:250]
+    dev.user_agent = ua
+    dev.browser, dev.os, dev.kind = parse_ua(ua)
+    ip = client_ip(request)
+    dev.last_ip = ip
+    dev.first_ip = dev.first_ip or ip
     dev.last_seen = timezone.now()
     dev.save()
     Token.objects.filter(device=dev).delete()  # one live token per device
-    return dev
+    return dev, created
 
 
 def user_json(u):
     p = Profile.of(u)
-    return {"id": u.pk, "username": u.get_username(), "email": u.email, "isStaff": u.is_staff,
-            "emailVerified": p.email_verified, "mustChangePassword": p.must_change_password}
+    return {"id": u.public_id, "email": u.email, "displayName": u.display_name, "name": u.display, "avatar": p.avatar_id or None,
+            "isStaff": u.is_staff, "twoFactor": p.totp_enabled, "emailVerified": p.email_verified, "mustChangePassword": p.must_change_password}
 
 
-def _session(request, user, body):
-    dev = _device_for(request, user, body)
+def _session(request, user, body, event="login"):
+    dev, new_device = _device_for(request, user, body)
     key, _ = Token.issue(user, dev)
+    security.record_event(request, user, user.email, event)
+    if (new_device and event == "login" and settings.DEPLOYMENT_MODE == "commercial" and settings.SMTP_ENABLED
+            and Device.objects.filter(user=user).count() > 1):
+        emails.send_new_device(request, user, dev)
     user.last_login = timezone.now()
     user.save(update_fields=["last_login"])
     return JsonResponse({"token": key, "user": user_json(user), "mustChangePassword": Profile.of(user).must_change_password, "serverTime": now_ms()})
@@ -73,43 +79,54 @@ def _check_password(pw, user=None):
     return None
 
 
+def _norm_email(v):
+    return str(v or "").strip().lower()[:254]
+
+
 @api(("POST",), auth=False)
 def register(request):
     if not registration_open():
         return err("registration is disabled", 403)
-    if not hit(f"reg:{client_ip(request)}", settings.RATE_LIMIT_AUTH, 60):
+    ip = client_ip(request)
+    if security.is_blocked(request) or not hit(f"reg:{ip}", settings.RATE_LIMIT_AUTH, 60) or not hit(f"reg-h:{ip}", 30, 3600):
         return err("too many attempts, try again later", 429)
     b = parse_json(request)
     if b is None:
         return err("invalid json")
-    username = str(b.get("username") or "").strip()
-    password = str(b.get("password") or "")
-    email = str(b.get("email") or "").strip().lower()[:254]
-    if not (3 <= len(username) <= 60) or any(c.isspace() for c in username):
-        return err("username must be 3-60 characters without spaces")
-    commercial = settings.DEPLOYMENT_MODE == "commercial"
-    if commercial or email:
-        try:
-            validate_email(email)
-        except ValidationError:
-            return err("a valid e-mail address is required")
-    if User.objects.filter(username__iexact=username).exists():
-        return err("username already taken", 409)
-    if email and User.objects.filter(email__iexact=email).exists():
-        return err("e-mail already registered", 409)
-    msg = _check_password(password, User(username=username, email=email))
+    # bot traps (honeypot + implausibly fast submit) get a fake success
+    if str(b.get("website") or "").strip() or (b.get("elapsedMs") is not None and int(b.get("elapsedMs") or 0) < 1200):
+        security.record_event(request, None, _norm_email(b.get("email")), "blocked", False)
+        return JsonResponse({"verificationRequired": True})
+    email, password = _norm_email(b.get("email")), str(b.get("password") or "")
+    name = validate.plain(b.get("displayName") or "", 60)
+    try:
+        validate_email(email)
+    except ValidationError:
+        return err("a valid e-mail address is required")
+    bad = security.email_policy_error(email)
+    if bad or security.is_blocked(request, email):
+        return err(bad or "this e-mail address cannot be used")
+    msg = _check_password(password, User(email=email))
     if msg:
         return err(msg)
-    user = User.objects.create_user(username=username, email=email, password=password)
     needs_verify = settings.REQUIRE_EMAIL_VERIFICATION
+    existing = User.objects.filter(email=email).first()
+    if existing:
+        if needs_verify:  # same answer as a fresh sign-up: no account enumeration
+            emails.send_already_registered(request, existing)
+            return JsonResponse({"verificationRequired": True, "email": email})
+        return err("could not create the account with these details", 409)
+    user = User.objects.create_user(email=email, password=password, display_name=name)
     Profile.objects.create(user=user, email_verified=not needs_verify)
     audit(request, "register", user)
     if needs_verify:
+        security.record_event(request, user, email, "register")
         emails.send_verify(request, user, EmailToken.issue(user, EmailToken.VERIFY))
         return JsonResponse({"verificationRequired": True, "email": email})
-    if settings.SMTP_ENABLED and email:
+    access.claim_invites(user)
+    if settings.SMTP_ENABLED:
         emails.send_welcome(request, user)
-    return _session(request, user, b)
+    return _session(request, user, b, "register")
 
 
 @api(("POST",), auth=False)
@@ -118,23 +135,55 @@ def login(request):
     b = parse_json(request)
     if b is None:
         return err("invalid json")
-    username = str(b.get("username") or "").strip()
-    if not hit(f"login:{ip}:{username.lower()}", settings.RATE_LIMIT_LOGIN, 300) or not hit(
-        f"loginip:{ip}", settings.RATE_LIMIT_AUTH * 3, 60
-    ):
+    email = _norm_email(b.get("email") or b.get("username"))
+    lkey = f"{ip}|{email}"
+    if security.is_blocked(request):
         return err("too many attempts, try again later", 429)
-    user = User.objects.filter(username__iexact=username).first()
-    if user is None and "@" in username:
-        user = User.objects.filter(email__iexact=username).first()
+    wait = security.lockout_remaining(lkey)
+    if wait:
+        r = err(f"too many failed attempts, try again in {wait}s", 429)
+        r["Retry-After"] = str(wait)
+        return r
+    if not hit(f"login:{lkey}", settings.RATE_LIMIT_LOGIN, 300) or not hit(f"loginip:{ip}", settings.RATE_LIMIT_AUTH * 3, 60):
+        return err("too many attempts, try again later", 429)
+    user = User.objects.filter(email=email).first()
     pw = str(b.get("password") or "")
-    ok = user.check_password(pw) if user else (User().set_password(pw) or False)  # constant-ish time
+    ok = user.check_password(pw) if user else (User().set_password(pw) or False)  # hasher always runs
     if not ok or not user.is_active:
-        audit(request, "login_failed", user, username[:60])
-        return err("invalid username or password", 401)
+        audit(request, "login_failed", user, email[:60])
+        security.record_event(request, user, email, "failed", False)
+        security.register_failure(lkey, settings.LOCKOUT_AFTER)
+        return err("invalid e-mail or password", 401)
     if settings.REQUIRE_EMAIL_VERIFICATION and not Profile.of(user).email_verified:
         return err("please confirm your e-mail address first", 403, code="unverified")
+    prof = Profile.of(user)
+    if prof.totp_enabled:
+        dev = Device.objects.filter(user=user, device_id=str(b.get("deviceId") or "")).first()
+        trusted = dev and dev.trusted_until and dev.trusted_until > timezone.now()
+        if not trusted:
+            code = str(b.get("code") or "")
+            if not code:
+                return err("two-factor code required", 401, code="2fa-required")
+            step = totp.verify(prof.totp_secret, code, prof.totp_last_step)
+            if step:
+                prof.totp_last_step = step
+                prof.save(update_fields=["totp_last_step"])
+            else:
+                import json as _j
+
+                left = totp.use_recovery(_j.loads(prof.recovery_hashes or "[]"), code)
+                if left is None:
+                    security.register_failure(lkey, settings.LOCKOUT_AFTER)
+                    security.record_event(request, user, email, "failed", False)
+                    return err("invalid code", 401, code="2fa-required")
+                prof.recovery_hashes = _j.dumps(left)
+                prof.save(update_fields=["recovery_hashes"])
+    security.clear_failures(lkey)
     audit(request, "login", user)
-    return _session(request, user, b)
+    resp = _session(request, user, b)
+    if prof.totp_enabled and b.get("remember"):
+        Device.objects.filter(user=user, device_id=str(b.get("deviceId") or "")).update(trusted_until=timezone.now() + __import__('datetime').timedelta(days=30))
+    return resp
 
 
 @api(("POST",), pw_ok=True)
@@ -145,33 +194,81 @@ def logout(request):
 
 @api(("POST",))
 def refresh(request):
-    """Rotate the bearer token (old one is invalidated)."""
     t = request.token
     key, _ = Token.issue(request.user, t.device)
     t.delete()
     return JsonResponse({"token": key, "serverTime": now_ms()})
 
 
-@api(("GET",), pw_ok=True)
+@api(("GET", "PATCH"), pw_ok=True)
 def me(request):
     u = request.user
     p = Profile.of(u)
+    if request.method == "PATCH":  # profile: display name only (e-mail is staff-managed, avatar has its own endpoint)
+        b = parse_json(request) or {}
+        if not hit(f"profile:{u.pk}", 20, 3600):
+            return err("too many changes, try again later", 429)
+        if "displayName" in b:
+            u.display_name = validate.plain(b.get("displayName") or "", 60)
+            u.save(update_fields=["display_name"])
+            audit(request, "profile_updated", u)
+        if b.get("removeAvatar") and p.avatar_id:
+            _rm_avatar(p)
     return JsonResponse({
-        "user": user_json(u),
-        "mode": settings.DEPLOYMENT_MODE,
-        "plan": (p.plan or None) and p.plan.name,
-        "usage": {
-            "assetBytes": quota.used_bytes(u),
-            "assets": AssetBlob.objects.filter(user=u).count(),
-            "records": Record.objects.filter(user=u, deleted=False).count(),
-            "notes": quota.note_count(u),
-            "quotaBytes": p.quota_bytes(),
-            "noteLimit": p.note_limit(),
-        },
-        "tokenExpires": request.token.expires_at.isoformat(),
-        "tokenCreated": request.token.created_at.isoformat(),
-        "serverTime": now_ms(),
+        "user": user_json(u), "mode": settings.DEPLOYMENT_MODE, "plan": p.plan.name if p.plan else None,
+        "usage": {"assetBytes": quota.used_bytes(u), "assets": AssetBlob.objects.filter(user=u).count(),
+                  "records": Record.objects.filter(user=u, deleted=False).count(), "notes": quota.note_count(u),
+                  "quotaBytes": p.quota_bytes(), "noteLimit": p.note_limit()},
+        "tokenExpires": request.token.expires_at.isoformat(), "tokenCreated": request.token.created_at.isoformat(), "serverTime": now_ms(),
     })
+
+
+def _avatar_path(aid):
+    return settings.MEDIA_ROOT / "avatars" / aid
+
+
+def _rm_avatar(p):
+    try:
+        os.remove(_avatar_path(p.avatar_id))
+    except OSError:
+        pass
+    p.avatar_id = ""
+    p.save(update_fields=["avatar_id"])
+
+
+@api(("PUT",), pw_ok=True)
+def avatar_upload(request):
+    """Client re-encodes to a 256px png/jpeg/webp (<=200KB); the server re-checks size and magic bytes."""
+    cl = request.META.get("CONTENT_LENGTH") or ""
+    if not cl.isdigit() or int(cl) > 200_000:
+        return err("avatar must be 200 KB or smaller", 413)
+    data = request.read(200_001)
+    kind = validate.sniff(data[:16])
+    if kind not in ("image/png", "image/jpeg", "image/webp") or len(data) > 200_000:
+        return err("avatar must be a PNG, JPEG or WebP image", 415)
+    if not hit(f"avatar:{request.user.pk}", 10, 3600):
+        return err("too many changes, try again later", 429)
+    p = Profile.of(request.user)
+    if p.avatar_id:
+        _rm_avatar(p)
+    p.avatar_id = new_uid()
+    (settings.MEDIA_ROOT / "avatars").mkdir(parents=True, exist_ok=True)
+    _avatar_path(p.avatar_id).write_bytes(data)
+    p.save(update_fields=["avatar_id"])
+    return JsonResponse({"avatar": p.avatar_id})
+
+
+@api(("GET",))
+def avatar_get(request, avatar_id):
+    """Only the owner, their collaborators and staff can fetch an avatar (ids are random)."""
+    p = Profile.objects.filter(avatar_id=avatar_id).select_related("user").first()
+    f = _avatar_path(avatar_id) if validate.ID_RE.match(avatar_id) else None
+    if not p or not f or not f.is_file() or not access.related(request.user, p.user):
+        return err("not found", 404)
+    head = f.read_bytes()[:16]
+    r = FileResponse(open(f, "rb"), content_type=validate.sniff(head) or "image/png")
+    r["Cache-Control"] = "private, max-age=86400"
+    return r
 
 
 @api(("POST",), pw_ok=True)
@@ -191,7 +288,7 @@ def change_password(request):
     u.set_password(new)
     u.save()
     Profile.objects.filter(user=u).update(must_change_password=False)
-    Token.objects.filter(user=u).exclude(pk=request.token.pk).delete()  # sign out other devices
+    Token.objects.filter(user=u).exclude(pk=request.token.pk).delete()
     audit(request, "password_changed", u)
     return JsonResponse({"ok": True})
 
@@ -200,6 +297,9 @@ def purge_user_files(user):
     shutil.rmtree(settings.MEDIA_ROOT / "assets" / str(user.pk), ignore_errors=True)
     for link in user.public_links.all():
         shutil.rmtree(settings.MEDIA_ROOT / "public" / str(link.pk), ignore_errors=True)
+    p = Profile.objects.filter(user=user).first()
+    if p and p.avatar_id:
+        _rm_avatar(p)
 
 
 @api(("POST", "DELETE"))
@@ -208,28 +308,14 @@ def delete_account(request):
     u = request.user
     if not u.check_password(str(b.get("password") or "")):
         return err("password is incorrect", 403)
-    audit(request, "account_deleted", None, u.get_username())
+    audit(request, "account_deleted", None, u.email)
     with transaction.atomic():
         purge_user_files(u)
         u.delete()
     return JsonResponse({"ok": True})
 
 
-@api(("GET",))
-def export_data(request):
-    """Everything the account owns as JSON (records only; asset blobs are fetched via /api/assets)."""
-    import json
-
-    recs = [{"kind": r.kind, "id": r.record_id, "updatedAt": r.updated_at, "deleted": r.deleted, "data": json.loads(r.data or "{}")}
-            for r in Record.objects.filter(user=request.user).order_by("seq")]
-    assets = list(AssetBlob.objects.filter(user=request.user).values("asset_id", "size", "mime"))
-    resp = JsonResponse({"format": "inkwell-account-export", "user": user_json(request.user), "exportedAt": now_ms(), "records": recs, "assets": assets})
-    resp["Content-Disposition"] = 'attachment; filename="inkwell-export.json"'
-    audit(request, "export", request.user)
-    return resp
-
-
-# ---- e-mail flows ----
+# ---- e-mail flows (uniform responses: never reveal whether an address has an account) ----
 @api(("POST",), auth=False)
 def verify(request):
     b = parse_json(request) or {}
@@ -239,48 +325,34 @@ def verify(request):
         Profile.of(t.user)
         Profile.objects.filter(user=t.user).update(email_verified=True)
         audit(request, "email_verified", t.user)
+        access.claim_invites(t.user)
         if settings.SMTP_ENABLED:
             emails.send_welcome(request, t.user)
-        return JsonResponse({"ok": True, "verified": True})
-    t = EmailToken.consume(raw, EmailToken.CHANGE)
-    if t:
-        if User.objects.filter(email__iexact=t.new_email).exclude(pk=t.user_id).exists():
-            return err("e-mail already registered", 409)
-        t.user.email = t.new_email
-        t.user.save(update_fields=["email"])
-        Profile.objects.filter(user=t.user).update(email_verified=True)
-        audit(request, "email_changed", t.user)
         return JsonResponse({"ok": True, "verified": True})
     return err("this link is invalid or has expired", 400)
 
 
 @api(("POST",), auth=False)
 def resend(request):
-    b = parse_json(request) or {}
-    email = str(b.get("email") or "").strip().lower()
+    email = _norm_email((parse_json(request) or {}).get("email"))
     if not hit(f"resendip:{client_ip(request)}", 10, 3600):
         return err("too many attempts, try again later", 429)
-    from django.core.cache import cache
-
-    if email and cache.add(f"resend:{email}", 1, settings.EMAIL_RESEND_SECONDS):
-        u = User.objects.filter(email__iexact=email, is_active=True).first()
+    if email and hit(f"resend:{email}", 1, settings.EMAIL_RESEND_SECONDS):
+        u = User.objects.filter(email=email, is_active=True).first()
         if u and not Profile.of(u).email_verified and settings.SMTP_ENABLED:
             emails.send_verify(request, u, EmailToken.issue(u, EmailToken.VERIFY))
-    return JsonResponse({"ok": True})  # same answer whether or not the address exists
+    return JsonResponse({"ok": True})
 
 
 @api(("POST",), auth=False)
 def forgot(request):
     if not settings.SMTP_ENABLED:
         return err("Password reset by e-mail is not available on this server. Ask an administrator to reset it.", 501)
-    b = parse_json(request) or {}
-    email = str(b.get("email") or "").strip().lower()
+    email = _norm_email((parse_json(request) or {}).get("email"))
     if not hit(f"forgotip:{client_ip(request)}", 10, 3600):
         return err("too many attempts, try again later", 429)
-    from django.core.cache import cache
-
-    if email and cache.add(f"forgot:{email}", 1, settings.EMAIL_RESEND_SECONDS):
-        u = User.objects.filter(email__iexact=email, is_active=True).first()
+    if email and hit(f"forgot:{email}", 1, settings.EMAIL_RESEND_SECONDS):
+        u = User.objects.filter(email=email, is_active=True).first()
         if u:
             emails.send_reset(request, u, EmailToken.issue(u, EmailToken.RESET))
             audit(request, "password_reset_requested", u)
@@ -293,13 +365,10 @@ def reset(request):
     if not hit(f"resetip:{client_ip(request)}", 20, 3600):
         return err("too many attempts, try again later", 429)
     new = str(b.get("newPassword") or "")
-    # validate before consuming so a weak password does not burn the link
-    from .models import hash_key
-
     pre = EmailToken.objects.select_related("user").filter(token_hash=hash_key(str(b.get("token") or "")), purpose=EmailToken.RESET, used=False).first()
     if not pre or pre.expires_at <= timezone.now():
         return err("this link is invalid or has expired", 400)
-    msg = _check_password(new, pre.user)
+    msg = _check_password(new, pre.user)  # validate first so a weak password does not burn the link
     if msg:
         return err(msg)
     t = EmailToken.consume(str(b.get("token")), EmailToken.RESET)
@@ -314,47 +383,17 @@ def reset(request):
     return JsonResponse({"ok": True})
 
 
-@api(("POST",))
-def change_email(request):
-    b = parse_json(request) or {}
-    u = request.user
-    if not u.check_password(str(b.get("password") or "")):
-        return err("password is incorrect", 403)
-    new = str(b.get("newEmail") or "").strip().lower()
-    try:
-        validate_email(new)
-    except ValidationError:
-        return err("a valid e-mail address is required")
-    if User.objects.filter(email__iexact=new).exclude(pk=u.pk).exists():
-        return err("e-mail already registered", 409)
-    if settings.SMTP_ENABLED:
-        if not hit(f"chmail:{u.pk}", 5, 3600):
-            return err("too many attempts, try again later", 429)
-        emails.send_verify(request, u, EmailToken.issue(u, EmailToken.CHANGE, new_email=new), new_email=new)
-        return JsonResponse({"ok": True, "pending": True})
-    u.email = new
-    u.save(update_fields=["email"])
-    audit(request, "email_changed", u)
-    return JsonResponse({"ok": True, "pending": False})
-
-
 @api(("GET",))
 def devices(request):
     cur = request.token.device_id
-    out = [
-        {
-            "id": d.device_id, "name": d.name, "userAgent": d.user_agent,
-            "createdAt": d.created_at.isoformat(), "lastSeen": d.last_seen.isoformat(),
-            "current": d.pk == cur, "active": d.tokens.filter(expires_at__gt=timezone.now()).exists(),
-        }
-        for d in Device.objects.filter(user=request.user).order_by("-last_seen")
-    ]
+    out = [{"id": d.device_id, "name": d.name, "browser": d.browser, "os": d.os, "kind": d.kind, "createdAt": d.created_at.isoformat(),
+            "lastSeen": d.last_seen.isoformat(), "current": d.pk == cur, "active": d.tokens.filter(expires_at__gt=timezone.now()).exists()}
+           for d in Device.objects.filter(user=request.user).order_by("-last_seen")]  # own devices only; no IPs
     return JsonResponse({"devices": out})
 
 
 @api(("DELETE", "POST"))
 def device_detail(request, device_id):
-    """Revoke a device: removes its tokens and the device row."""
     n, _ = Device.objects.filter(user=request.user, device_id=device_id).delete()
     if not n:
         return err("not found", 404)
@@ -363,3 +402,48 @@ def device_detail(request, device_id):
 
 def temp_password():
     return secrets.token_urlsafe(9) + "-" + str(secrets.randbelow(90) + 10)
+
+
+@api(("POST",))
+def twofa_setup(request):
+    p = Profile.of(request.user)
+    if p.totp_enabled:
+        return err("two-factor is already enabled", 409)
+    p.totp_secret = totp.new_secret()
+    p.save(update_fields=["totp_secret"])
+    return JsonResponse({"secret": p.totp_secret, "otpauth": totp.uri(p.totp_secret, request.user.email)})
+
+
+@api(("POST",))
+def twofa_enable(request):
+    import json as _j
+
+    p = Profile.of(request.user)
+    step = totp.verify(p.totp_secret, (parse_json(request) or {}).get("code")) if p.totp_secret else None
+    if not step:
+        return err("that code is not correct", 400)
+    codes, hashes = totp.new_recovery()
+    p.totp_enabled, p.totp_last_step, p.recovery_hashes = True, step, _j.dumps(hashes)
+    p.save()
+    audit(request, "2fa_enabled", request.user)
+    return JsonResponse({"ok": True, "recoveryCodes": codes})  # shown once
+
+
+@api(("POST",))
+def twofa_disable(request):
+    b = parse_json(request) or {}
+    p = Profile.of(request.user)
+    if not request.user.check_password(str(b.get("password") or "")) or not totp.verify(p.totp_secret, b.get("code"), p.totp_last_step):
+        return err("password or code is incorrect", 403)
+    p.totp_enabled, p.totp_secret, p.recovery_hashes = False, "", "[]"
+    p.save()
+    Device.objects.filter(user=request.user).update(trusted_until=None)
+    audit(request, "2fa_disabled", request.user)
+    return JsonResponse({"ok": True})
+
+
+@api(("POST",))
+def logout_all(request):
+    Token.objects.filter(user=request.user).exclude(pk=request.token.pk).delete()
+    audit(request, "logout_all", request.user)
+    return JsonResponse({"ok": True})

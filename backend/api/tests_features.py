@@ -7,7 +7,7 @@ from django.core import mail
 from django.test import override_settings
 from django.utils import timezone
 
-from .models import AuditLog, EmailToken, Plan, Profile, PublicLink, Share
+from .models import AuditLog, EmailToken, Plan, Profile, PublicLink, Record, Share
 from .sanitize import sanitize_html
 from .tests import Base, j, rec
 
@@ -17,9 +17,10 @@ PW = "correct-horse-42"
 
 class Helpers(Base):
     def make_user(self, name, email=None, staff=False, device="d"):
-        u = User.objects.create_user(name, email or f"{name}@example.com", PW, is_staff=staff)
+        u = User.objects.create_user(email or f"{name}@example.com", PW, is_staff=staff, display_name=name.title())
         Profile.objects.create(user=u, email_verified=True)
-        return u, self.login(name, device=f"{device}-{name}")
+        r = self.post("/api/auth/login", {"email": u.email, "password": PW, "deviceId": f"{device}-{name}"})
+        return u, j(r)["token"]
 
     def auth(self, t):
         return {"HTTP_AUTHORIZATION": f"Bearer {t}"}
@@ -37,18 +38,18 @@ class InternalModeTests(Helpers):
         cfg = j(self.get("/api/config"))
         self.assertEqual(cfg["mode"], "internal")
         self.assertFalse(cfg["registrationOpen"])
-        self.assertEqual(self.post("/api/auth/register", {"username": "mallory", "password": PW}).status_code, 403)
+        self.assertEqual(self.post("/api/auth/register", {"email": "mallory@example.com", "password": PW}).status_code, 403)
 
     def test_admin_manages_users(self):
         _, admin = self.make_user("root", staff=True)
         _, normal = self.make_user("bob")
         self.assertEqual(self.get("/api/admin/users", normal).status_code, 403)
-        r = self.post("/api/admin/users", {"username": "carol", "email": "carol@example.com", "storageMb": 5}, admin)
+        r = self.post("/api/admin/users", {"email": "carol@example.com", "storageMb": 5}, admin)
         self.assertEqual(r.status_code, 201)
         temp = j(r)["tempPassword"]
-        uid = j(r)["user"]["id"]
+        uid = j(r)["user"]["id"]  # opaque public id
         # temp password works but must be changed before anything else
-        t = j(self.post("/api/auth/login", {"username": "carol", "password": temp, "deviceId": "c1"}))
+        t = j(self.post("/api/auth/login", {"email": "carol@example.com", "password": temp, "deviceId": "c1"}))
         self.assertTrue(t["mustChangePassword"])
         self.assertEqual(self.get("/api/sync/pull", t["token"]).status_code, 403)
         self.assertEqual(self.get("/api/auth/me", t["token"]).status_code, 200)
@@ -60,13 +61,13 @@ class InternalModeTests(Helpers):
         self.assertEqual(self.get("/api/auth/me", t["token"]).status_code, 401)
         self.assertTrue(j(r)["tempPassword"])
         self.patch(f"/api/admin/users/{uid}", {"isActive": False, "storageMb": 1, "maxNotes": 3}, admin)
-        u = User.objects.get(pk=uid)
+        u = User.objects.get(public_id=uid)
         self.assertFalse(u.is_active)
         self.assertEqual(u.profile.storage_mb_override, 1)
-        self.assertEqual(self.post("/api/auth/login", {"username": "carol", "password": j(r)["tempPassword"]}).status_code, 401)
+        self.assertEqual(self.post("/api/auth/login", {"email": "carol@example.com", "password": j(r)["tempPassword"]}).status_code, 401)
         users = j(self.get("/api/admin/users", admin))["users"]
-        self.assertEqual({x["username"] for x in users}, {"root", "bob", "carol"})
-        self.assertEqual(self.patch(f"/api/admin/users/{User.objects.get(username='root').pk}", {"isActive": False}, admin).status_code, 400)
+        self.assertEqual({x["email"] for x in users}, {"root@example.com", "bob@example.com", "carol@example.com"})
+        self.assertEqual(self.patch(f"/api/admin/users/{User.objects.get(email='root@example.com').public_id}", {"isActive": False}, admin).status_code, 400)
         events = {e["event"] for e in j(self.get("/api/admin/audit", admin))["events"]}
         self.assertTrue({"admin.create_user", "admin.reset_password", "admin.update_user", "login"} <= events)
 
@@ -90,22 +91,31 @@ class CommercialModeTests(Helpers):
         self.assertEqual((cfg["mode"], cfg["registrationOpen"], cfg["smtp"], cfg["emailVerification"]), ("commercial", True, True, True))
 
     def test_register_verify_login(self):
-        r = self.post("/api/auth/register", {"username": "dave", "email": "dave@example.com", "password": PW})
+        r = self.post("/api/auth/register", {"email": "dave@example.com", "password": PW})
         self.assertTrue(j(r)["verificationRequired"])
         self.assertNotIn("token", j(r))
         self.assertIn("https://notes.example.com/#/auth/verify?token=", mail.outbox[0].body)
         self.assertTrue(mail.outbox[0].alternatives)  # HTML part
-        self.assertEqual(self.post("/api/auth/login", {"username": "dave", "password": PW}).status_code, 403)
+        self.assertEqual(self.post("/api/auth/login", {"email": "dave@example.com", "password": PW}).status_code, 403)
         tok = self.token_from_mail()
         self.assertEqual(self.post("/api/auth/verify", {"token": tok}).status_code, 200)
         self.assertEqual(self.post("/api/auth/verify", {"token": tok}).status_code, 400)  # single use
-        self.assertEqual(self.post("/api/auth/login", {"username": "dave", "password": PW, "deviceId": "x"}).status_code, 200)
+        self.assertEqual(self.post("/api/auth/login", {"email": "dave@example.com", "password": PW, "deviceId": "x"}).status_code, 200)
+
+    def test_no_enumeration_on_signup_and_forgot(self):
+        self.make_user("kim", email="kim@example.com")
+        a = self.post("/api/auth/register", {"email": "kim@example.com", "password": PW})
+        b = self.post("/api/auth/register", {"email": "new1@example.com", "password": PW})
+        self.assertEqual((a.status_code, j(a)["verificationRequired"]), (b.status_code, j(b)["verificationRequired"]))
+        x = self.post("/api/auth/forgot", {"email": "kim@example.com"})
+        y = self.post("/api/auth/forgot", {"email": "ghost@example.com"})
+        self.assertEqual((x.status_code, x.content), (y.status_code, y.content))
 
     def test_register_requires_email(self):
-        self.assertEqual(self.post("/api/auth/register", {"username": "erin", "password": PW}).status_code, 400)
+        self.assertEqual(self.post("/api/auth/register", {"email": "", "password": PW}).status_code, 400)
 
     def test_resend_throttled_and_expiry(self):
-        self.post("/api/auth/register", {"username": "fay", "email": "fay@example.com", "password": PW})
+        self.post("/api/auth/register", {"email": "fay@example.com", "password": PW})
         n = len(mail.outbox)
         self.post("/api/auth/resend", {"email": "fay@example.com"})
         self.post("/api/auth/resend", {"email": "fay@example.com"})
@@ -125,29 +135,24 @@ class CommercialModeTests(Helpers):
         self.assertEqual(self.post("/api/auth/reset", {"token": tok, "newPassword": "123"}).status_code, 400)  # weak: link survives
         self.assertEqual(self.post("/api/auth/reset", {"token": tok, "newPassword": "totally-new-pass-55"}).status_code, 200)
         self.assertEqual(self.post("/api/auth/reset", {"token": tok, "newPassword": "totally-new-pass-66"}).status_code, 400)
-        self.assertEqual(self.post("/api/auth/login", {"username": "gus", "password": "totally-new-pass-55", "deviceId": "q"}).status_code, 200)
+        self.assertEqual(self.post("/api/auth/login", {"email": "gus@example.com", "password": "totally-new-pass-55", "deviceId": "q"}).status_code, 200)
 
     @override_settings(SMTP_ENABLED=False)
     def test_forgot_unavailable_without_smtp(self):
         self.assertEqual(self.post("/api/auth/forgot", {"email": "a@b.co"}).status_code, 501)
 
-    def test_change_email_and_export(self):
+    def test_email_not_user_changeable(self):
         u, t = self.make_user("hana", email="old@example.com")
-        mail.outbox.clear()
-        self.assertEqual(self.post("/api/auth/email", {"password": "bad", "newEmail": "new@example.com"}, t).status_code, 403)
-        self.assertEqual(self.post("/api/auth/email", {"password": PW, "newEmail": "new@example.com"}, t).status_code, 200)
-        self.assertEqual(mail.outbox[0].to, ["new@example.com"])
-        self.post("/api/auth/verify", {"token": self.token_from_mail()})
+        self.assertEqual(self.post("/api/auth/email", {"password": PW, "newEmail": "new@example.com"}, t).status_code, 404)
+        _, admin = self.make_user("root", staff=True)
+        self.assertEqual(self.patch(f"/api/admin/users/{u.public_id}", {"email": "New@Example.com"}, admin).status_code, 200)
         u.refresh_from_db()
         self.assertEqual(u.email, "new@example.com")
-        self.push(t, rec("notes", "n1", 1, title="mine"))
-        exp = j(self.get("/api/auth/export", t))
-        self.assertEqual(exp["records"][0]["data"]["title"], "mine")
 
     def test_audit_logged(self):
-        self.post("/api/auth/register", {"username": "ivy", "email": "ivy@example.com", "password": PW})
+        self.post("/api/auth/register", {"email": "ivy@example.com", "password": PW})
         self.assertTrue(AuditLog.objects.filter(event="register").exists())
-        self.post("/api/auth/login", {"username": "ivy", "password": "nope"})
+        self.post("/api/auth/login", {"email": "ivy@example.com", "password": "nope"})
         self.assertTrue(AuditLog.objects.filter(event="login_failed").exists())
 
     def test_plan_defaults_editable(self):
@@ -177,65 +182,97 @@ class SharingTests(Helpers):
         self.share("notes", "n1", "bob", "viewer")
         p = j(self.get(f"/api/sync/pull?since={cur}", self.bt))  # old cursor still sees newly shared (seq bumped)
         self.assertEqual([x["id"] for x in p["records"]], ["n1"])
-        self.assertEqual(p["records"][0]["owner"], "owner")
+        self.assertEqual(p["records"][0]["owner"], "Owner")
         self.assertEqual(p["records"][0]["role"], "viewer")
         self.assertEqual(p["shared"][0]["id"], "n1")
         # viewer write is refused and the server copy comes back as a forced conflict
-        w = dict(rec("notes", "n1", 5000, title="hacked"), ownerId=self.owner.pk)
+        w = dict(rec("notes", "n1", 5000, title="hacked"), ownerId=self.owner.public_id)
         r = self.push(self.bt, w)
         self.assertEqual(r["accepted"], [])
         self.assertTrue(r["conflicts"][0]["force"])
         mine = {x["id"]: x for x in j(self.get("/api/sync/pull?since=0", self.ot))["records"]}
         self.assertEqual(mine["n1"]["data"]["title"], "plan")
         # unshared note is not writable / visible
-        w2 = dict(rec("notes", "n2", 5000, title="x"), ownerId=self.owner.pk)
+        w2 = dict(rec("notes", "n2", 5000, title="x"), ownerId=self.owner.public_id)
         self.assertEqual(self.push(self.bt, w2)["rejected"][0]["error"], "forbidden")
 
     def test_editor_edits_sync_back_with_lww(self):
         self.push(self.ot, rec("notes", "n1", 1000, title="v1"))
         self.share("notes", "n1", "bob", "editor")
-        w = dict(rec("notes", "n1", 3000, title="v2 by bob"), ownerId=self.owner.pk)
+        w = dict(rec("notes", "n1", 3000, title="v2 by bob"), ownerId=self.owner.public_id)
         self.assertEqual(len(self.push(self.bt, w)["accepted"]), 1)
         self.assertEqual(j(self.get("/api/sync/pull?since=0", self.ot))["records"][0]["data"]["title"], "v2 by bob")
-        old = dict(rec("notes", "n1", 2000, title="stale"), ownerId=self.owner.pk)
+        old = dict(rec("notes", "n1", 2000, title="stale"), ownerId=self.owner.public_id)
         self.assertEqual(len(self.push(self.bt, old)["conflicts"]), 1)
 
     def test_notebook_share_covers_notes_and_assets(self):
         self.push(self.ot, rec("notebooks", "nb", 1, name="Team"), rec("notes", "n1", 1, title="in", notebookId="nb"),
                   rec("notes", "n9", 1, title="out", notebookId="other"), rec("assets", "as1", 1, noteId="n1"))
-        self.put_bytes("/api/assets/as1", self.ot, b"IMG", "image/png")
+        self.put_bytes("/api/assets/as1", self.ot, b"\x89PNG\r\n\x1a\nIMG", "image/png")
         self.share("notebooks", "nb", "bob", "editor")
         ids = {x["id"] for x in j(self.get("/api/sync/pull?since=0", self.bt))["records"]}
         self.assertEqual(ids, {"nb", "n1", "as1"})
-        self.assertEqual(self.get(f"/api/assets/as1?owner={self.owner.pk}", self.bt).status_code, 200)
-        self.assertEqual(self.get(f"/api/assets/as1?owner={self.owner.pk}", self.et).status_code, 404)
+        self.assertEqual(self.get(f"/api/assets/as1?owner={self.owner.public_id}", self.bt).status_code, 200)
+        self.assertEqual(self.get(f"/api/assets/as1?owner={self.owner.public_id}", self.et).status_code, 404)
         # editor can create a new note inside the shared notebook
-        new = dict(rec("notes", "n10", 4000, title="new", notebookId="nb"), ownerId=self.owner.pk)
+        new = dict(rec("notes", "n10", 4000, title="new", notebookId="nb"), ownerId=self.owner.public_id)
         self.assertEqual(len(self.push(self.bt, new)["accepted"]), 1)
         self.assertIn("n10", {x["id"] for x in j(self.get("/api/sync/pull?since=0", self.ot))["records"]})
         # editor may upload an attachment for it
-        r = self.c.put(f"/api/assets/as2?owner={self.owner.pk}", data=b"x", content_type="image/png", HTTP_X_NOTE_ID="n10", **self.auth(self.bt))
+        r = self.c.put(f"/api/assets/as2?owner={self.owner.public_id}", data=b"\x89PNG\r\n\x1a\nx", content_type="image/png", HTTP_X_NOTE_ID="n10", **self.auth(self.bt))
         self.assertEqual(r.status_code, 200)
 
     def test_revoke_and_outsider_isolation(self):
         self.push(self.ot, rec("notes", "n1", 1, title="s"))
         s = self.share("notes", "n1", "bob", "viewer")
         self.assertEqual(j(self.get("/api/shared", self.bt))["shared"][0]["title"], "s")
+        self.assertNotIn("email", j(self.get("/api/shared", self.bt))["shared"][0]["owner"])
         self.assertEqual(j(self.get("/api/sync/pull?since=0", self.et))["records"], [])
         self.assertEqual(self.c.delete(f"/api/share/people/{s['id']}", **self.auth(self.et)).status_code, 404)
+        self.assertEqual(self.c.delete("/api/share/people/doesnotexist", **self.auth(self.et)).status_code, 404)
         people = j(self.get("/api/share/people?kind=notes&id=n1", self.ot))["people"]
-        self.assertEqual(people[0]["recipient"]["username"], "bob")
+        self.assertEqual(people[0]["recipient"]["name"], "Bob")
         self.assertEqual(self.get("/api/share/people?kind=notes&id=n1", self.bt).status_code, 200)
         self.assertEqual(j(self.get("/api/share/people?kind=notes&id=n1", self.bt))["people"], [])  # not the owner's list
         self.assertEqual(self.c.delete(f"/api/share/people/{s['id']}", **self.auth(self.ot)).status_code, 200)
         p = j(self.get("/api/sync/pull?since=0", self.bt))
         self.assertEqual((p["records"], p["shared"]), ([], []))
 
+    def test_pending_invite_claimed_on_signup(self):
+        self.push(self.ot, rec("notes", "n1", 1, title="inv"))
+        r = self.post("/api/share/people", {"kind": "notes", "id": "n1", "email": "newbie@example.com", "role": "viewer"}, self.ot)
+        self.assertEqual(r.status_code, 202)
+        u, t = self.make_user("newbie")
+        from . import access
+
+        access.claim_invites(u)
+        self.assertEqual([x["id"] for x in j(self.get("/api/sync/pull?since=0", t))["records"]], ["n1"])
+
+    def test_blocked_user_cannot_share_to_blocker(self):
+        self.push(self.ot, rec("notes", "n1", 1))
+        self.post("/api/blocks", {"userId": self.owner.public_id}, self.bt)
+        self.post("/api/share/people", {"kind": "notes", "id": "n1", "email": "bob@example.com"}, self.ot)
+        self.assertEqual(j(self.get("/api/sync/pull?since=0", self.bt))["records"], [])
+
+    def test_presence_and_activity_authz(self):
+        self.push(self.ot, rec("notes", "n1", 1))
+        self.share("notes", "n1", "bob", "editor")
+        r = self.post("/api/presence", {"noteId": "n1", "ownerId": self.owner.public_id, "state": "drawing"}, self.bt)
+        self.assertEqual(r.status_code, 200)
+        users = j(self.post("/api/presence", {"noteId": "n1", "state": "viewing"}, self.ot))["users"]
+        self.assertEqual([(u["name"], u["state"]) for u in users], [("Bob", "drawing")])
+        self.assertNotIn("email", users[0])
+        self.assertEqual(self.post("/api/presence", {"noteId": "n1", "ownerId": self.owner.public_id}, self.et).status_code, 404)
+        for _ in range(3):
+            self.post("/api/notes/n1/activity", {"ownerId": self.owner.public_id, "action": "added-strokes", "pageId": "p1", "count": 5}, self.bt)
+        ev = j(self.get(f"/api/notes/n1/activity?ownerId={self.owner.public_id}", self.ot))["events"]
+        self.assertEqual([(e["action"], e["count"]) for e in ev if e["action"] == "added-strokes"], [("added-strokes", 15)])
+        self.assertEqual(self.get(f"/api/notes/n1/activity?ownerId={self.owner.public_id}", self.et).status_code, 404)
+
     def test_share_errors(self):
         self.assertEqual(self.post("/api/share/people", {"kind": "notes", "id": "missing", "email": "bob@example.com"}, self.ot).status_code, 409)
         self.push(self.ot, rec("notes", "n1", 1))
-        self.assertEqual(self.post("/api/share/people", {"kind": "notes", "id": "n1", "email": "ghost@example.com"}, self.ot).status_code, 404)
-        self.assertEqual(self.post("/api/share/people", {"kind": "notes", "id": "n1", "email": "owner@example.com"}, self.ot).status_code, 400)
+        self.assertEqual(self.post("/api/share/people", {"kind": "notes", "id": "n1", "email": "ghost@example.com"}, self.ot).status_code, 202)
         # a recipient cannot re-share
         self.share("notes", "n1", "bob", "editor")
         self.assertEqual(self.post("/api/share/people", {"kind": "notes", "id": "n1", "email": "eve@example.com"}, self.bt).status_code, 409)
@@ -249,12 +286,15 @@ class SharingTests(Helpers):
         self.assertIn("Hello", mail.outbox[-1].subject)
 
 
+@override_settings(DEPLOYMENT_MODE="commercial")
 class PublicLinkTests(Helpers):
     def setUp(self):
         super().setUp()
         self.owner, self.ot = self.make_user("owner")
 
     def publish(self, **kw):
+        if not Record.objects.filter(user=self.owner, record_id="n1").exists():
+            self.push(self.ot, rec("notes", "n1", 1, title="t"))
         body = {"noteId": "n1", "snapshot": {"title": "My <b>note</b>", "text": "<p>hi</p><script>alert(1)</script>", "pages": [{"key": "p1", "w": 820, "h": 1160}]}}
         body.update(kw)
         r = self.post("/api/share/public", body, self.ot)
@@ -262,9 +302,10 @@ class PublicLinkTests(Helpers):
         return j(r)["link"]
 
     def test_publish_view_assets_counter(self):
+        self.push(self.ot, rec("notes", "n1", 1, title="t"))
         link = self.publish(allowDownload=True)
-        self.assertEqual(self.put_bytes(f"/api/share/public/{link['token']}/asset/p1", self.ot, b"\x89PNG", "image/png").status_code, 200)
-        self.assertEqual(self.put_bytes(f"/api/share/public/{link['token']}/asset/pdf", self.ot, b"%PDF", "application/pdf").status_code, 200)
+        self.assertEqual(self.put_bytes(f"/api/share/public/{link['token']}/asset/p1", self.ot, b"\x89PNG\r\n\x1a\n", "image/png").status_code, 200)
+        self.assertEqual(self.put_bytes(f"/api/share/public/{link['token']}/asset/pdf", self.ot, b"%PDF-1.4", "application/pdf").status_code, 200)
         r = self.c.get(link["path"])
         self.assertEqual(r.status_code, 200)
         html = r.content.decode()
@@ -274,15 +315,16 @@ class PublicLinkTests(Helpers):
         self.assertIn(f"/s/{link['token']}/a/p1", html)
         self.assertIn("Download PDF", html)
         self.assertIn("default-src 'none'", r["Content-Security-Policy"])
-        self.assertEqual(b"".join(self.c.get(f"{link['path']}/a/p1").streaming_content), b"\x89PNG")
-        self.assertEqual(b"".join(self.c.get(f"{link['path']}/pdf").streaming_content), b"%PDF")
+        self.assertEqual(b"".join(self.c.get(f"{link['path']}/a/p1").streaming_content), b"\x89PNG\r\n\x1a\n")
+        self.assertEqual(b"".join(self.c.get(f"{link['path']}/pdf").streaming_content), b"%PDF-1.4")
         self.assertEqual(self.get("/api/share/public?noteId=n1", self.ot).status_code, 200)
         self.assertGreaterEqual(j(self.get("/api/share/public?noteId=n1", self.ot))["link"]["views"], 1)
-        self.assertEqual(self.put_bytes(f"/api/share/public/{link['token']}/asset/p1", self.ot, b"x", "text/html").status_code, 415)
+        self.assertEqual(self.put_bytes(f"/api/share/public/{link['token']}/asset/p1", self.ot, b"x", "image/svg+xml").status_code, 415)
+        self.assertEqual(self.put_bytes(f"/api/share/public/{link['token']}/asset/p1", self.ot, b"<svg", "image/png").status_code, 415)  # magic bytes must match
 
     def test_download_toggle(self):
         link = self.publish(allowDownload=False)
-        self.put_bytes(f"/api/share/public/{link['token']}/asset/pdf", self.ot, b"%PDF", "application/pdf")
+        self.put_bytes(f"/api/share/public/{link['token']}/asset/pdf", self.ot, b"%PDF-1.4", "application/pdf")
         self.assertEqual(self.c.get(f"{link['path']}/pdf").status_code, 404)
         self.assertNotIn("Download PDF", self.c.get(link["path"]).content.decode())
 
@@ -293,7 +335,7 @@ class PublicLinkTests(Helpers):
 
     def test_password_protection(self):
         link = self.publish(password="s3cret-pass")
-        self.put_bytes(f"/api/share/public/{link['token']}/asset/p1", self.ot, b"IMG", "image/png")
+        self.put_bytes(f"/api/share/public/{link['token']}/asset/p1", self.ot, b"\x89PNG\r\n\x1a\nIMG", "image/png")
         r = self.c.get(link["path"])
         self.assertIn("Protected note", r.content.decode())
         self.assertNotIn("My", r.content.decode())
@@ -303,7 +345,7 @@ class PublicLinkTests(Helpers):
         self.assertEqual(ok.status_code, 200)
         self.assertIn("note", ok.content.decode())
         self.assertEqual(self.c.get(link["path"]).status_code, 200)  # cookie remembered
-        self.assertEqual(b"".join(self.c.get(f"{link['path']}/a/p1").streaming_content), b"IMG")
+        self.assertEqual(b"".join(self.c.get(f"{link['path']}/a/p1").streaming_content), b"\x89PNG\r\n\x1a\nIMG")
         # fresh client without cookie still blocked
         from django.test import Client
 
@@ -335,7 +377,7 @@ class PublicLinkTests(Helpers):
 
     def test_live_update_replaces_content(self):
         link = self.publish()
-        self.put_bytes(f"/api/share/public/{link['token']}/asset/p1", self.ot, b"old", "image/png")
+        self.put_bytes(f"/api/share/public/{link['token']}/asset/p1", self.ot, b"\x89PNG\r\n\x1a\nold", "image/png")
         self.publish(snapshot={"title": "v2", "text": "<p>second</p>", "pages": [{"key": "q1", "w": 1, "h": 1}]})
         self.assertEqual(self.c.get(f"{link['path']}/a/p1").status_code, 404)
         self.assertIn("second", self.c.get(link["path"]).content.decode())
@@ -354,7 +396,7 @@ class PublicLinkTests(Helpers):
     def test_quota_applies_to_public_assets(self):
         link = self.publish()
         Profile.objects.filter(user=self.owner).update(storage_mb_override=1)
-        r = self.put_bytes(f"/api/share/public/{link['token']}/asset/p1", self.ot, b"x" * (2 * 1024 * 1024), "image/png")
+        r = self.put_bytes(f"/api/share/public/{link['token']}/asset/p1", self.ot, b"\x89PNG\r\n\x1a\n" + b"x" * (2 * 1024 * 1024), "image/png")
         self.assertEqual(r.status_code, 413)
 
     def test_requires_auth(self):
@@ -384,3 +426,123 @@ class SanitizerTests(Base):
         self.assertIn('href="https://x.org/?a=1&amp;b=2"', out)
         self.assertIn('rel="noopener noreferrer nofollow"', out)
         self.assertIn("disabled checked", out)
+
+
+class InternalLinkVisibilityTests(Helpers):
+    def test_internal_mode_blocks_anonymous_links_unless_enabled(self):
+        u, t = self.make_user("own")
+        self.push(t, rec("notes", "n1", 1, title="t"))
+        body = {"noteId": "n1", "snapshot": {"title": "T", "text": "<p>x</p>", "pages": []}}
+        self.assertEqual(self.post("/api/share/public", {**body, "visibility": "public"}, t).status_code, 403)
+        r = self.post("/api/share/public", {**body, "visibility": "internal"}, t)
+        self.assertEqual(r.status_code, 201)
+        link = j(r)["link"]
+        page = self.c.get(link["path"])  # anonymous visitor only gets a sign-in prompt, no content
+        self.assertIn("Sign in to view", page.content.decode())
+        self.assertNotIn("<p>x</p>", page.content.decode())
+        from . import runtime
+
+        runtime.put("allow_anonymous_links", True)
+        self.assertEqual(self.post("/api/share/public", {**body, "visibility": "public"}, t).status_code, 200)
+        self.assertIn("<p>x</p>", self.c.get(link["path"]).content.decode())
+
+    def test_redeem_link_creates_share_and_respects_password_and_write(self):
+        o, ot = self.make_user("own")
+        v, vt = self.make_user("vis")
+        self.push(ot, rec("notes", "n1", 1, title="t"))
+        body = {"noteId": "n1", "snapshot": {"title": "T", "text": "", "pages": []}, "visibility": "internal", "permission": "write", "password": "pw-secret-1"}
+        link = j(self.post("/api/share/public", body, ot))["link"]
+        info = j(self.get(f"/api/share/link/info?token={link['token']}"))
+        self.assertTrue(info["hasPassword"])
+        self.assertEqual(self.post("/api/share/link/redeem", {"token": link["token"], "password": "bad"}, vt).status_code, 403)
+        r = self.post("/api/share/link/redeem", {"token": link["token"], "password": "pw-secret-1"}, vt)
+        self.assertEqual(j(r)["role"], "editor")
+        w = dict(rec("notes", "n1", 5000, title="by visitor"), ownerId=o.public_id)
+        self.assertEqual(len(self.push(vt, w)["accepted"]), 1)
+        self.assertEqual(j(self.get("/api/share/public?noteId=n1", ot))["link"]["edits"], 1)
+        self.assertEqual(self.post("/api/share/link/redeem", {"token": "x" * 32}, vt).status_code, 404)
+
+
+class SecurityTests(Helpers):
+    def test_schema_rejects_hostile_records(self):
+        u, t = self.make_user("sec")
+        bad = [
+            rec("notes", "n1", 1, **{"__proto__": {"x": 1}}),
+            rec("notes", "n2", 1, pages=[{"strokes": "no"}]),
+            rec("notes", "n3", 1, tags="x"),
+            rec("assets", "a1", 1, akind="pdf", mime="text/html"),
+            {"kind": "notes", "id": "../x", "updatedAt": 1, "data": {}},
+        ]
+        r = self.post("/api/sync/push", {"records": bad}, t)
+        self.assertEqual(len(j(r)["rejected"]), 5)
+        deep = {"a": 1}
+        for _ in range(20):
+            deep = {"k": deep}
+        self.assertEqual(len(j(self.post("/api/sync/push", {"records": [rec("notes", "n9", 1, x=deep)]}, t))["rejected"]), 1)
+
+    def test_title_html_stripped_and_client_only_fields_dropped(self):
+        u, t = self.make_user("sec")
+        self.push(t, rec("notes", "n1", 1, title="<img src=x onerror=alert(1)>Hi", sharedBy="evil", dirty=1))
+        d = j(self.get("/api/sync/pull?since=0", t))["records"][0]["data"]
+        self.assertEqual(d["title"], "Hi")
+        self.assertNotIn("sharedBy", d)
+
+    def test_cursor_opaque_and_user_bound(self):
+        a, at = self.make_user("a1")
+        b, bt = self.make_user("b1")
+        self.push(at, rec("notes", "n1", 1))
+        cur = j(self.get("/api/sync/pull?since=0", at))["cursor"]
+        self.assertEqual(self.get("/api/sync/pull?since=5", at).status_code, 400)
+        self.assertEqual(self.get(f"/api/sync/pull?since={cur}", bt).status_code, 400)  # cursor signed per user
+
+    def test_no_ip_or_email_leak_to_collaborators(self):
+        o, ot = self.make_user("own")
+        b, bt = self.make_user("col")
+        self.push(ot, rec("notes", "n1", 1, title="x"))
+        self.post("/api/share/people", {"kind": "notes", "id": "n1", "email": b.email, "role": "editor"}, ot)
+        blob = self.get("/api/sync/pull?since=0", bt).content.decode() + self.get("/api/shared", bt).content.decode()
+        self.assertNotIn("127.0.0.1", blob)
+        self.assertNotIn(o.email, blob)
+
+    def test_totp_and_recovery(self):
+        from . import totp
+
+        u, t = self.make_user("tfa")
+        sec = j(self.post("/api/auth/2fa/setup", {}, t))["secret"]
+        self.assertEqual(self.post("/api/auth/2fa/enable", {"code": "000000"}, t).status_code, 400)
+        code = totp._code(sec, int(__import__("time").time() // 30))
+        codes = j(self.post("/api/auth/2fa/enable", {"code": code}, t))["recoveryCodes"]
+        r = self.post("/api/auth/login", {"email": u.email, "password": PW, "deviceId": "n1"})
+        self.assertEqual((r.status_code, j(r)["code"]), (401, "2fa-required"))
+        ok = self.post("/api/auth/login", {"email": u.email, "password": PW, "deviceId": "n1", "code": codes[0]})
+        self.assertEqual(ok.status_code, 200)
+        again = self.post("/api/auth/login", {"email": u.email, "password": PW, "deviceId": "n2", "code": codes[0]})
+        self.assertEqual(again.status_code, 401)  # recovery codes are single use
+
+    def test_avatar_rules(self):
+        a, at = self.make_user("av")
+        o, ot = self.make_user("other")
+        png = b"\x89PNG\r\n\x1a\n" + b"0" * 100
+        self.assertEqual(self.c.put("/api/auth/avatar", data=b"GARBAGE" * 10, content_type="image/png", **self.auth(at)).status_code, 415)
+        r = self.c.put("/api/auth/avatar", data=png, content_type="image/png", **self.auth(at))
+        aid = j(r)["avatar"]
+        self.assertEqual(self.get(f"/api/avatar/{aid}", at).status_code, 200)
+        self.assertEqual(self.get(f"/api/avatar/{aid}", ot).status_code, 404)  # strangers cannot fetch it
+        self.assertEqual(self.c.patch("/api/auth/me", json.dumps({"displayName": "<b>Zed</b>"}), content_type="application/json", **self.auth(at)).status_code, 200)
+        self.assertEqual(User.objects.get(pk=a.pk).display_name, "Zed")
+
+    def test_trash_restore_and_purge(self):
+        u, t = self.make_user("tr")
+        self.push(t, rec("notes", "n1", 1000, title="keep me"))
+        self.push(t, rec("notes", "n1", 2000, deleted=True, title="keep me"))
+        items = j(self.get("/api/trash", t))["items"]
+        self.assertEqual(items[0]["title"], "keep me")
+        self.assertEqual(self.post("/api/trash/notes/n1/restore", {}, t).status_code, 200)
+        rec_ = [x for x in j(self.get("/api/sync/pull?since=0", t))["records"] if x["id"] == "n1"][0]
+        self.assertFalse(rec_["deleted"])
+        self.push(t, rec("notes", "n1", rec_["updatedAt"] + 1, deleted=True, title="keep me"))
+        Record.objects.update(deleted_at=timezone.now() - timedelta(days=40))
+        from . import trash
+
+        self.assertEqual(trash.purge_expired(), 1)
+        self.assertEqual(j(self.get("/api/trash", t))["items"], [])

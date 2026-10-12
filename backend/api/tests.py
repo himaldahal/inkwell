@@ -34,12 +34,12 @@ class Base(TestCase):
         return self.c.get(path, **h, **extra)
 
     def register(self, name="alice", device="dev-a", pw="correct-horse-42"):
-        r = self.post("/api/auth/register", {"username": name, "password": pw, "deviceId": device, "deviceName": device})
+        r = self.post("/api/auth/register", {"email": f"{name}@example.com", "password": pw, "deviceId": device, "deviceName": device})
         self.assertEqual(r.status_code, 200, r.content)
         return j(r)["token"]
 
     def login(self, name="alice", device="dev-b", pw="correct-horse-42"):
-        r = self.post("/api/auth/login", {"username": name, "password": pw, "deviceId": device, "deviceName": device})
+        r = self.post("/api/auth/login", {"email": f"{name}@example.com", "password": pw, "deviceId": device, "deviceName": device})
         self.assertEqual(r.status_code, 200, r.content)
         return j(r)["token"]
 
@@ -57,7 +57,7 @@ class AuthTests(Base):
     def test_register_login_me_logout(self):
         t = self.register()
         me = j(self.get("/api/auth/me", t))
-        self.assertEqual(me["user"]["username"], "alice")
+        self.assertEqual(me["user"]["email"], "alice@example.com")
         self.assertEqual(self.get("/api/auth/me").status_code, 401)
         self.assertEqual(self.get("/api/auth/me", "nope").status_code, 401)
         self.assertEqual(self.post("/api/auth/logout", {}, t).status_code, 200)
@@ -70,24 +70,24 @@ class AuthTests(Base):
 
     def test_duplicate_and_weak_password(self):
         self.register()
-        r = self.post("/api/auth/register", {"username": "ALICE", "password": "correct-horse-42"})
-        self.assertEqual(r.status_code, 409)
-        r = self.post("/api/auth/register", {"username": "bob", "password": "123"})
+        r = self.post("/api/auth/register", {"email": "ALICE@example.com", "password": "correct-horse-42"})
+        self.assertIn(r.status_code, (409,))
+        r = self.post("/api/auth/register", {"email": "bob@example.com", "password": "123"})
         self.assertEqual(r.status_code, 400)
 
     def test_bad_login(self):
         self.register()
-        r = self.post("/api/auth/login", {"username": "alice", "password": "wrong"})
+        r = self.post("/api/auth/login", {"email": "alice@example.com", "password": "wrong"})
         self.assertEqual(r.status_code, 401)
 
     def test_login_throttle(self):
         self.register()
-        codes = [self.post("/api/auth/login", {"username": "alice", "password": "x"}).status_code for _ in range(12)]
+        codes = [self.post("/api/auth/login", {"email": "alice@example.com", "password": "x"}).status_code for _ in range(12)]
         self.assertIn(429, codes)
 
     @override_settings(ALLOW_REGISTRATION=False)
     def test_registration_toggle(self):
-        r = self.post("/api/auth/register", {"username": "alice", "password": "correct-horse-42"})
+        r = self.post("/api/auth/register", {"email": "alice@example.com", "password": "correct-horse-42"})
         self.assertEqual(r.status_code, 403)
 
     def test_change_password_signs_out_others(self):
@@ -107,7 +107,7 @@ class AuthTests(Base):
         self.assertEqual(self.post("/api/auth/delete", {"password": "no"}, t).status_code, 403)
         self.assertEqual(self.post("/api/auth/delete", {"password": "correct-horse-42"}, t).status_code, 200)
         self.assertEqual(self.get("/api/auth/me", t).status_code, 401)
-        self.assertEqual(self.post("/api/auth/login", {"username": "alice", "password": "correct-horse-42"}).status_code, 401)
+        self.assertEqual(self.post("/api/auth/login", {"email": "alice@example.com", "password": "correct-horse-42"}).status_code, 401)
 
     def test_token_expiry_and_refresh(self):
         from datetime import timedelta
@@ -226,7 +226,7 @@ class SyncTests(Base):
         pa = j(self.get("/api/sync/pull?since=0", a))["records"]
         self.assertEqual([x["data"]["title"] for x in pa], ["alice secret"])
         # assets isolated too
-        self.c.put("/api/assets/img1", data=b"abc", content_type="image/png", HTTP_AUTHORIZATION=f"Bearer {a}")
+        self.c.put("/api/assets/img1", data=b"\x89PNG\r\n\x1a\nabc", content_type="image/png", HTTP_AUTHORIZATION=f"Bearer {a}")
         self.assertEqual(self.get("/api/assets/img1", b).status_code, 404)
         self.assertEqual(self.get("/api/assets/img1", a).status_code, 200)
         self.assertEqual(self.c.delete("/api/assets/img1", HTTP_AUTHORIZATION=f"Bearer {b}").status_code, 200)
@@ -235,12 +235,13 @@ class SyncTests(Base):
 
 class AssetTests(Base):
     def put(self, t, aid, data, ctype="application/pdf"):
+        data = b"%PDF" + data
         return self.c.put(f"/api/assets/{aid}", data=data, content_type=ctype, HTTP_AUTHORIZATION=f"Bearer {t}")
 
     def test_upload_download(self):
         t = self.register()
-        blob = bytes(range(256)) * 100
-        self.assertEqual(self.put(t, "a1", blob).status_code, 200)
+        blob = b"%PDF" + bytes(range(256)) * 100
+        self.assertEqual(self.put(t, "a1", bytes(range(256)) * 100).status_code, 200)
         r = self.get("/api/assets/a1", t)
         self.assertEqual(b"".join(r.streaming_content), blob)
         self.assertEqual(r["Content-Type"], "application/pdf")
@@ -249,17 +250,18 @@ class AssetTests(Base):
         self.assertEqual(self.get("/api/assets/missing", t).status_code, 404)
         self.assertEqual(self.get("/api/assets/a1").status_code, 401)
         self.assertEqual(self.put(t, "../etc", b"x").status_code, 404)
-        self.assertEqual(self.put(t, "bad id", b"x").status_code, 400)
+        self.assertEqual(self.put(t, "bad id", b"x").status_code, 404)
+        self.assertEqual(self.c.put("/api/assets/zz", data=b"<html>", content_type="text/html", HTTP_AUTHORIZATION=f"Bearer {t}").status_code, 415)
 
     def test_quota(self):
         from .models import Profile
 
         t = self.register()
-        Profile.objects.update_or_create(user__username="alice", defaults={"user": __import__("django.contrib.auth", fromlist=["x"]).get_user_model().objects.get(username="alice"), "storage_mb_override": 1})
+        Profile.objects.filter(user__email="alice@example.com").update(storage_mb_override=1)
         mb = 1024 * 1024
-        self.assertEqual(self.put(t, "a", b"x" * (600 * 1024)).status_code, 200)
-        self.assertEqual(self.put(t, "b", b"x" * (600 * 1024)).status_code, 413)
-        self.assertEqual(self.put(t, "a", b"x" * (900 * 1024)).status_code, 200)  # replace counts net
+        self.assertEqual(self.put(t, "a", b"x" * (600 * 1024 - 4)).status_code, 200)
+        self.assertEqual(self.put(t, "b", b"x" * (600 * 1024 - 4)).status_code, 413)
+        self.assertEqual(self.put(t, "a", b"x" * (900 * 1024 - 4)).status_code, 200)  # replace counts net
         used = j(self.get("/api/auth/me", t))["usage"]["assetBytes"]
         self.assertEqual(used, 900 * 1024)
         self.assertEqual(j(self.get("/api/auth/me", t))["usage"]["quotaBytes"], mb)
@@ -305,7 +307,7 @@ class MultiDeviceTests(Base):
         self.assertEqual(pa["n1"]["text"], "laptop")
         # incremental from the laptop cursor yields only what it hasn't seen
         inc = j(self.get(f"/api/sync/pull?since={cur_b}", b))["records"]
-        self.assertTrue(all(x["seq"] > cur_b for x in inc))
+        self.assertEqual(len(inc), 3)
 
     def test_device_list_and_revoke(self):
         a = self.register(device="phone")

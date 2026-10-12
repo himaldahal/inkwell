@@ -1,5 +1,26 @@
+import base64
+import hashlib
+import re
+
 from django.conf import settings
 from django.http import HttpResponse
+
+_hash_cache = {"mtime": None, "hashes": ""}
+
+
+def inline_script_hashes():
+    """CSP hashes for the inline <script> blocks in the built index.html (so script-src needs no 'unsafe-inline')."""
+    f = settings.APP_DIR / "index.html"
+    try:
+        m = f.stat().st_mtime
+        if _hash_cache["mtime"] != m:
+            html = f.read_text(encoding="utf-8")
+            hs = [f"'sha256-{base64.b64encode(hashlib.sha256(c.encode()).digest()).decode()}'"
+                  for c in re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", html, re.S) if c.strip()]
+            _hash_cache.update(mtime=m, hashes=" ".join(hs))
+    except OSError:
+        pass
+    return _hash_cache["hashes"]
 
 
 class CorsMiddleware:
@@ -46,9 +67,10 @@ class SecurityHeadersMiddleware:
         if request.path.startswith("/api/"):
             resp.setdefault("Cache-Control", "no-store")
         elif not request.path.startswith("/admin/"):
-            resp.setdefault(
+            if not request.path.startswith("/s/"):  # public pages set their own stricter policy
+              resp.setdefault(
                 "Content-Security-Policy",
-                "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; "
+                f"default-src 'self'; script-src 'self' 'wasm-unsafe-eval' {inline_script_hashes()}; "
                 "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: data:; "
                 "font-src 'self' data:; worker-src 'self' blob:; manifest-src 'self'; object-src 'none'; "
                 f"connect-src {settings.CSP_CONNECT_SRC}; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",

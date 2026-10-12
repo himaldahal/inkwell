@@ -1,6 +1,18 @@
 from django.contrib import admin
 
-from .models import AssetBlob, Device, Record, Token
+from django.contrib.auth.admin import UserAdmin
+
+from .models import AssetBlob, Device, Record, Token, User
+
+@admin.register(User)
+class InkwellUserAdmin(UserAdmin):
+    ordering = ("email",)
+    list_display = ("email", "display_name", "is_active", "is_staff")
+    search_fields = ("email", "display_name")
+    fieldsets = ((None, {"fields": ("email", "password")}), ("Profile", {"fields": ("display_name",)}),
+                 ("Permissions", {"fields": ("is_active", "is_staff", "is_superuser")}))
+    add_fieldsets = ((None, {"classes": ("wide",), "fields": ("email", "password1", "password2")}),)
+
 
 admin.site.register(Device)
 admin.site.register(AssetBlob)

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#F2F2F7" />
+  <meta name="description" content="Inkwell - offline-first handwriting and note-taking" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="format-detection" content="telephone=no" />
+  <meta name="apple-mobile-web-app-title" content="Inkwell" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23FF9F0A'/%3E%3Cpath d='M9 23l2-7 9-9 3 3-9 9z' fill='%23fff'/%3E%3C/svg%3E" />
+  <title>Inkwell</title>
+  <script>
+    // set theme before first paint to avoid a flash
+    try {
+      var s = JSON.parse(localStorage.getItem('inkwell:boot') || '{}');
+      var t = s.theme || 'system', r = document.documentElement;
+      r.setAttribute('data-theme', t);
+      var dark = t === 'dark' || (t === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+      var m = document.querySelector('meta[name="theme-color"]');
+      if (m) m.content = dark ? '#000000' : t === 'sepia' ? '#F1E7D0' : '#F2F2F7';
+      if (s.accent) document.documentElement.style.setProperty('--accent', s.accent);
+    } catch (e) {}
+  </script>
+  <style>
+    #splash{position:fixed;inset:0;z-index:1000;display:grid;place-items:center;background:#F2F2F7;transition:opacity .35s ease,transform .35s ease}
+    html[data-theme="dark"] #splash{background:#000}
+    @media (prefers-color-scheme:dark){html[data-theme="system"] #splash{background:#000}}
+    #splash.out{opacity:0;transform:scale(1.04);pointer-events:none}
+    #splash .lg{width:72px;height:72px;border-radius:20px;background:#FF9F0A;display:grid;place-items:center;box-shadow:0 12px 30px rgba(255,159,10,.4);animation:sp .7s cubic-bezier(.2,.9,.3,1.3) both}
+    @keyframes sp{from{transform:scale(.6) rotate(-12deg);opacity:0}}
+  </style>
+  <script type="module" crossorigin src="/assets/index-F2PADWhF.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-D_sve7L3.css">
+<link rel="manifest" href="/manifest.webmanifest"></head>
+<body>
+  <div id="splash"><div class="lg"><svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></div></div>
+  <div id="app"></div>
+  <div id="overlay-root"></div>
+  <noscript>Inkwell needs JavaScript to run.</noscript>
+</body>
+</html>
