@@ -143,7 +143,7 @@ def shared_with_me(request):
 
 # ---------- public links ----------
 def _public_dir(link):
-    return settings.MEDIA_ROOT / "public" / str(link.pk)
+    return settings.MEDIA_ROOT / "public" / link.uid
 
 
 def link_json(request, link):
@@ -225,10 +225,9 @@ def public_link(request):
     link.save()
     keep = {p["key"] for p in pages} | ({"pdf"} if snap.get("hasPdf") else set())
     for a in link.assets.exclude(key__in=keep):  # live update: drop stale images
-        try:
-            os.remove(_public_dir(link) / a.key)
-        except OSError:
-            pass
+        from .files import remove
+
+        remove(_public_dir(link) / (a.fname or a.key))
         a.delete()
     audit(request, "public.publish", me, f"{kind}:{note_id}{' (new)' if created else ''} {vis}/{perm}")
     return JsonResponse({"link": link_json(request, link)}, status=201 if created else 200)
@@ -295,8 +294,8 @@ def public_asset(request, token, key):
     if q and used + size > q:
         return err("storage quota exceeded", 413)
     d = _public_dir(link)
-    d.mkdir(parents=True, exist_ok=True)
-    tmp = d / (key + ".part")
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
+    tmp = d / (secrets.token_hex(8) + ".part")
     written = 0
     first = request.read(16)
     if validate.sniff(first) != mime:
@@ -314,8 +313,14 @@ def public_asset(request, token, key):
                 os.remove(tmp)
                 return err("body exceeds declared length", 413)
             f.write(chunk)
-    os.replace(tmp, d / key)
-    PublicAsset.objects.update_or_create(link=link, key=key, defaults={"mime": mime, "size": written})
+    fname = secrets.token_hex(16)
+    os.replace(tmp, d / fname)
+    os.chmod(d / fname, 0o600)
+    if ex and (ex.fname or ex.key):
+        from .files import remove
+
+        remove(d / (ex.fname or ex.key))
+    PublicAsset.objects.update_or_create(link=link, key=key, defaults={"mime": mime, "size": written, "fname": fname})
     return JsonResponse({"ok": True, "size": written})
 
 

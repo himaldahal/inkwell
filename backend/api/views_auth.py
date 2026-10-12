@@ -225,15 +225,14 @@ def me(request):
     })
 
 
-def _avatar_path(aid):
-    return settings.MEDIA_ROOT / "avatars" / aid
+def _avatar_path(p, aid=None):
+    return settings.MEDIA_ROOT / "avatars" / p.user.public_id / (aid or p.avatar_id)
 
 
 def _rm_avatar(p):
-    try:
-        os.remove(_avatar_path(p.avatar_id))
-    except OSError:
-        pass
+    from .files import remove
+
+    remove(_avatar_path(p))
     p.avatar_id = ""
     p.save(update_fields=["avatar_id"])
 
@@ -254,8 +253,8 @@ def avatar_upload(request):
     if p.avatar_id:
         _rm_avatar(p)
     p.avatar_id = new_uid()
-    (settings.MEDIA_ROOT / "avatars").mkdir(parents=True, exist_ok=True)
-    _avatar_path(p.avatar_id).write_bytes(data)
+    _avatar_path(p).parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _avatar_path(p).write_bytes(data)
     p.save(update_fields=["avatar_id"])
     return JsonResponse({"avatar": p.avatar_id})
 
@@ -263,14 +262,17 @@ def avatar_upload(request):
 @api(("GET",))
 def avatar_get(request, avatar_id):
     """Only the owner, their collaborators and staff can fetch an avatar (ids are random)."""
-    p = Profile.objects.filter(avatar_id=avatar_id).select_related("user").first()
-    f = _avatar_path(avatar_id) if validate.ID_RE.match(avatar_id) else None
-    if not p or not f or not f.is_file() or not access.related(request.user, p.user):
+    p = Profile.objects.filter(avatar_id=avatar_id).select_related("user").first() if validate.ID_RE.match(avatar_id) else None
+    if not p or not access.related(request.user, p.user):
         return err("not found", 404)
-    head = f.read_bytes()[:16]
-    r = FileResponse(open(f, "rb"), content_type=validate.sniff(head) or "image/png")
-    r["Cache-Control"] = "private, max-age=86400"
-    return r
+    from .files import serve
+
+    f = _avatar_path(p)
+    try:
+        kind = validate.sniff(f.read_bytes()[:16]) or "image/png"
+        return serve(request, f, kind, cache="private, max-age=86400", filename="avatar")
+    except (FileNotFoundError, OSError):
+        return err("not found", 404)
 
 
 @api(("POST",), pw_ok=True)
@@ -296,9 +298,10 @@ def change_password(request):
 
 
 def purge_user_files(user):
-    shutil.rmtree(settings.MEDIA_ROOT / "assets" / str(user.pk), ignore_errors=True)
+    shutil.rmtree(settings.MEDIA_ROOT / "assets" / user.public_id, ignore_errors=True)
+    shutil.rmtree(settings.MEDIA_ROOT / "avatars" / user.public_id, ignore_errors=True)
     for link in user.public_links.all():
-        shutil.rmtree(settings.MEDIA_ROOT / "public" / str(link.pk), ignore_errors=True)
+        shutil.rmtree(settings.MEDIA_ROOT / "public" / link.uid, ignore_errors=True)
     p = Profile.objects.filter(user=user).first()
     if p and p.avatar_id:
         _rm_avatar(p)
@@ -511,3 +514,32 @@ def account_settings(request):
         p.save(update_fields=["settings_json", "settings_at"])
         return JsonResponse({"ok": True, "updatedAt": p.settings_at})
     return JsonResponse({"settings": _j.loads(p.settings_json) if p.settings_json else None, "updatedAt": p.settings_at})
+
+
+@api(("GET",), pw_ok=True)
+def me_stats(request):
+    """Numbers for the profile dashboard. Own IPs are shown only to their owner."""
+    import json as _j
+
+    from .models import LoginEvent, PublicLink, Share
+
+    u = request.user
+    notes = Record.objects.filter(user=u, kind="notes", deleted=False)
+    pages = 0
+    for raw in notes.exclude(data__startswith='{"enc"').values_list("data", flat=True)[:2000]:
+        try:
+            pages += len(_j.loads(raw).get("pages") or [])
+        except ValueError:
+            pass
+    trash = Record.objects.filter(user=u, deleted=True, kind__in=("notes", "notebooks")).exclude(data="{}")
+    p = Profile.of(u)
+    return JsonResponse({
+        "notes": notes.count(), "notebooks": Record.objects.filter(user=u, kind="notebooks", deleted=False).count(), "pages": pages,
+        "storage": {"used": quota.used_bytes(u), "quota": p.quota_bytes()},
+        "sharesOut": Share.objects.filter(owner=u).count(), "sharesIn": Share.objects.filter(recipient=u).count(),
+        "links": PublicLink.objects.filter(owner=u, revoked=False).count(),
+        "trash": {"items": trash.count(), "bytes": sum(len(d) for d in trash.values_list("data", flat=True)[:5000]), "retentionDays": settings.TRASH_RETENTION_DAYS},
+        "memberSince": u.date_joined.isoformat(), "role": rbac.role_of(u),
+        "signins": [{"at": e.created_at.isoformat(), "event": e.event, "ok": e.ok, "ip": e.ip, "browser": e.browser, "os": e.os, "kind": e.kind}
+                    for e in LoginEvent.objects.filter(user=u).order_by("-id")[:10]],
+    })

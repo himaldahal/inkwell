@@ -361,6 +361,7 @@ class PublicLink(models.Model):
 class PublicAsset(models.Model):
     link = models.ForeignKey(PublicLink, on_delete=models.CASCADE, related_name="assets")
     key = models.CharField(max_length=40)
+    fname = models.CharField(max_length=40, blank=True, default="")  # random file name on disk
     mime = models.CharField(max_length=80, default="application/octet-stream")
     size = models.BigIntegerField(default=0)
 

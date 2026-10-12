@@ -13,3 +13,14 @@ def index(request, path=""):
     r = FileResponse(open(f, "rb"), content_type="text/html; charset=utf-8")
     r["Cache-Control"] = NO_CACHE
     return r
+
+
+def not_found(request, exception=None):
+    from django.http import JsonResponse
+
+    if request.path.startswith("/api/"):
+        return JsonResponse({"error": "not found"}, status=404)
+    return HttpResponse(
+        '<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><title>Not found</title>'
+        '<body style="font:16px system-ui;text-align:center;margin-top:20vh"><h1>Not found</h1><p><a href="/">Back to Inkwell</a></p></body>',
+        status=404, content_type="text/html; charset=utf-8")

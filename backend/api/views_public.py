@@ -147,15 +147,15 @@ def public_asset(request, token, key):
     if _needs_login(link) or not _authorized(request, link):
         return _gone("Not available", 401)
     a = PublicAsset.objects.filter(link=link, key=key).first()
-    f = _public_dir(link) / key
-    if not a or not f.is_file() or (key == "pdf" and not link.allow_download):
+    if not a or (key == "pdf" and not link.allow_download):
         raise Http404
-    r = FileResponse(open(f, "rb"), content_type=a.mime)
-    r["Cache-Control"] = "private, max-age=300"
-    r["Content-Security-Policy"] = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+    from .files import serve
+
+    try:
+        r = serve(request, _public_dir(link) / (a.fname or a.key), a.mime, cache="private, max-age=300", filename="note.pdf" if a.mime == "application/pdf" else "image")
+    except (FileNotFoundError, OSError):
+        raise Http404
     r["X-Robots-Tag"] = "noindex"
-    if a.mime == "application/pdf":
-        r["Content-Disposition"] = 'attachment; filename="note.pdf"'
     return r
 
 

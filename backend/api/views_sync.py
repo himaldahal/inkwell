@@ -23,10 +23,9 @@ def _rec_json(r, me=None, owners=None):  # noqa: C901
     except ValueError:
         data = {}
     out = {"kind": r.kind, "id": r.record_id, "updatedAt": r.updated_at, "deleted": r.deleted, "seq": r.seq, "data": data}
+    if me is not None:
+        out["ownerId"] = r.user.public_id  # every record names its owner so clients can verify it
     if me is not None and r.user_id != me.pk:
-        if owners is not None and r.user_id not in owners:
-            owners[r.user_id] = r.user.get_username()
-        out["ownerId"] = r.user.public_id
         out["owner"] = r.user.display
         out["role"] = access.role_for(me, r.user_id, r.kind, r.record_id, r.parent_id)
     return out

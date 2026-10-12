@@ -113,7 +113,8 @@ def api(methods=("GET",), auth=True, perm=None, pw_ok=False):
         def wrapper(request, *a, **kw):
             if request.method == "OPTIONS":
                 return JsonResponse({})
-            if request.method not in methods and not (request.method == "HEAD" and "GET" in methods):
+            bad_method = request.method not in methods and not (request.method == "HEAD" and "GET" in methods)
+            if bad_method and not auth:
                 return err("method not allowed", 405)
             if auth:
                 t = authenticate(request)
@@ -122,6 +123,8 @@ def api(methods=("GET",), auth=True, perm=None, pw_ok=False):
                 if not hit(f"tok:{t.pk}", settings.RATE_LIMIT_API, 60, db=False):
                     return err("rate limited", 429)
                 request.user, request.token = t.user, t
+                if bad_method:
+                    return err("method not allowed", 405)
                 if perm is not None:
                     from . import rbac
 

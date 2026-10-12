@@ -134,11 +134,8 @@ LOCKOUT_AFTER = env_int("LOCKOUT_AFTER", 5)
 AUTH_USER_MODEL = "api.User"
 
 INSTALLED_APPS = [
-    "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
-    "django.contrib.sessions",
-    "django.contrib.messages",
     "django.contrib.staticfiles",
     "api",
 ]
@@ -150,31 +147,11 @@ MIDDLEWARE = [
     "api.metrics.MetricsMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.middleware.gzip.GZipMiddleware",
-    "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
-    "django.middleware.csrf.CsrfViewMiddleware",
-    "django.contrib.auth.middleware.AuthenticationMiddleware",
-    "django.contrib.messages.middleware.MessageMiddleware",
 ]
 
 ROOT_URLCONF = "inkwell.urls"
 WSGI_APPLICATION = "inkwell.wsgi.application"
-
-TEMPLATES = [
-    {
-        "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [],
-        "APP_DIRS": True,
-        "OPTIONS": {
-            "context_processors": [
-                "django.template.context_processors.debug",
-                "django.template.context_processors.request",
-                "django.contrib.auth.context_processors.auth",
-                "django.contrib.messages.context_processors.messages",
-            ]
-        },
-    }
-]
 
 # ---- Database ---------------------------------------------------------------
 if env("DB_ENGINE", "sqlite").lower().startswith("mysql"):
@@ -233,9 +210,26 @@ USE_I18N = False
 USE_TZ = True
 
 # ---- Files ------------------------------------------------------------------
-MEDIA_ROOT = Path(env("MEDIA_ROOT") or (BASE_DIR / "media"))
-STATIC_URL = "/django-static/"  # admin assets only; the app itself is served from the root
+# ---- Static files (collectstatic -> STATIC_ROOT, served by WhiteNoise at /static/) ----
+STATIC_URL = "/static/"
 STATIC_ROOT = Path(env("STATIC_ROOT") or (BASE_DIR / "staticfiles"))
+STATICFILES_DIRS = [BASE_DIR / "static"] if (BASE_DIR / "static").is_dir() else []
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage" if DEBUG else "whitenoise.storage.CompressedManifestStaticFilesStorage"},
+}
+# ---- User media: NEVER served directly (no URL route, not in WhiteNoise); only via permission-checked views ----
+MEDIA_URL = "/media/"
+MEDIA_ROOT = Path(env("MEDIA_ROOT") or (BASE_DIR / "media"))
+SENDFILE = env("SENDFILE", "none").lower()  # none | apache (X-Sendfile) | nginx (X-Accel-Redirect)
+SENDFILE_URL_PREFIX = env("SENDFILE_URL_PREFIX", "/protected-media/")  # nginx internal location that maps to MEDIA_ROOT
+for _d, _mode in ((STATIC_ROOT, 0o755), (MEDIA_ROOT, 0o700)):  # created automatically with safe permissions
+    try:
+        _d.mkdir(parents=True, exist_ok=True)
+        if _d is MEDIA_ROOT:
+            os.chmod(_d, _mode)
+    except OSError:
+        pass
 APP_DIR = BASE_DIR / "inkwell" / "static_app"  # built frontend (committed)
 WHITENOISE_ROOT = APP_DIR if APP_DIR.is_dir() else None
 WHITENOISE_INDEX_FILE = True

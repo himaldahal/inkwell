@@ -757,3 +757,63 @@ class RbacTests(Helpers):
         from django.conf import settings
 
         self.assertEqual(settings.TRASH_RETENTION_DAYS, 60)
+
+
+class HardeningTests(Helpers):
+    def test_no_admin_and_media_never_served(self):
+        for path in ("/admin/", "/admin/login/", "/media/assets/x", "/static/nothing"):
+            self.assertEqual(self.c.get(path).status_code, 404, path)
+        self.assertEqual(self.c.get("/api/nope").json(), {"error": "not found"})
+
+    def test_spa_paths_served_with_no_cache(self):
+        for p in ("/dashboard/", "/dashboard/system/", "/profile/", "/login/", "/register/"):
+            r = self.c.get(p)
+            self.assertIn(r.status_code, (200, 503), p)
+            if r.status_code == 200:
+                self.assertIn("no-cache", r["Cache-Control"])
+
+    def test_every_data_endpoint_needs_a_token(self):
+        for path in ("/api/sync/pull", "/api/sync/push", "/api/assets/x", "/api/avatar/x", "/api/settings", "/api/presence", "/api/notes/n1/activity",
+                     "/api/shared", "/api/trash", "/api/auth/me", "/api/auth/me/stats", "/api/devices", "/api/share/people", "/api/rtc/signal"):
+            self.assertEqual(self.c.get(path).status_code, 401, path)
+
+    def test_records_carry_owner_and_never_cross(self):
+        a, at = self.make_user("a1")
+        b, bt = self.make_user("b1")
+        self.push(at, rec("notes", "n1", 1, title="mine"))
+        self.push(bt, rec("notes", "n1", 1, title="theirs"))  # same client id, different owner
+        ra = j(self.get("/api/sync/pull?since=0", at))["records"]
+        rb = j(self.get("/api/sync/pull?since=0", bt))["records"]
+        self.assertEqual([(x["data"]["title"], x["ownerId"]) for x in ra], [("mine", a.public_id)])
+        self.assertEqual([(x["data"]["title"], x["ownerId"]) for x in rb], [("theirs", b.public_id)])
+
+    def test_files_random_names_range_and_etag(self):
+        from .models import AssetBlob
+
+        u, t = self.make_user("f1")
+        data = b"%PDF" + bytes(range(200))
+        self.c.put("/api/assets/doc1", data=data, content_type="application/pdf", **self.auth(t))
+        blob = AssetBlob.objects.get()
+        self.assertNotIn("doc1", blob.path)
+        self.assertIn(u.public_id, blob.path)
+        r = self.get("/api/assets/doc1", t, HTTP_RANGE="bytes=4-9")
+        self.assertEqual((r.status_code, b"".join(r.streaming_content)), (206, data[4:10]))
+        self.assertEqual(r["X-Content-Type-Options"], "nosniff")
+        r2 = self.get("/api/assets/doc1", t, HTTP_IF_NONE_MATCH=r["ETag"])
+        self.assertEqual(r2.status_code, 304)
+
+    def test_sendfile_offload_switch(self):
+        u, t = self.make_user("f2")
+        self.c.put("/api/assets/doc2", data=b"%PDFxx", content_type="application/pdf", **self.auth(t))
+        with override_settings(SENDFILE="nginx"):
+            r = self.get("/api/assets/doc2", t)
+            self.assertTrue(r["X-Accel-Redirect"].startswith("/protected-media/assets/"))
+        with override_settings(SENDFILE="apache"):
+            self.assertIn("X-Sendfile", self.get("/api/assets/doc2", t))
+
+    def test_me_stats(self):
+        u, t = self.make_user("st")
+        self.push(t, rec("notes", "n1", 1, title="a", pages=[{"id": "p"}]))
+        s = j(self.get("/api/auth/me/stats", t))
+        self.assertEqual((s["notes"], s["pages"]), (1, 1))
+        self.assertIn("quota", s["storage"])

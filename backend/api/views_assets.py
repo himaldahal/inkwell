@@ -4,9 +4,9 @@ import re
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
-from django.http import FileResponse, HttpResponse, JsonResponse, StreamingHttpResponse
+from django.http import JsonResponse
 
-from . import access, quota, validate
+from . import access, files, quota, validate
 from .models import AssetBlob, Profile
 from .util import api, err
 
@@ -14,16 +14,18 @@ ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 INLINE = ("image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf")
 
 
-def _path(user, asset_id):
-    return settings.MEDIA_ROOT / "assets" / str(user.pk) / asset_id
+def _dir(user):
+    return settings.MEDIA_ROOT / "assets" / user.public_id  # per-owner folder; files inside have random names
+
+
+def _path(user, asset_id):  # temp upload file for resumable uploads (never served)
+    return _dir(user) / asset_id
 
 
 def delete_blob_file(user, asset_id):
-    for ext in ("", ".part"):
-        try:
-            os.remove(str(_path(user, asset_id)) + ext)
-        except OSError:
-            pass
+    for b in AssetBlob.objects.filter(user=user, asset_id=asset_id):
+        files.remove(b.path)
+    files.remove(str(_path(user, asset_id)) + ".part")
     AssetBlob.objects.filter(user=user, asset_id=asset_id).delete()
 
 
@@ -64,46 +66,12 @@ def asset(request, asset_id):
 
 def _get(request, owner, asset_id):
     b = AssetBlob.objects.filter(user=owner, asset_id=asset_id).first()
-    p = _path(owner, asset_id)
-    if not b or not p.is_file():
+    if not b:
         return err("not found", 404)
-    etag = f'"{b.size}-{int(b.updated_at.timestamp())}"'
-    if request.headers.get("If-None-Match") == etag:
-        r = HttpResponse(status=304)
-        r["ETag"] = etag
-        return r
-    rng = re.match(r"^bytes=(\d*)-(\d*)$", request.headers.get("Range", ""))
-    if rng and (rng.group(1) or rng.group(2)):
-        start = int(rng.group(1)) if rng.group(1) else max(0, b.size - int(rng.group(2)))
-        end = min(int(rng.group(2)), b.size - 1) if rng.group(1) and rng.group(2) else b.size - 1
-        if start > end or start >= b.size:
-            r = HttpResponse(status=416)
-            r["Content-Range"] = f"bytes */{b.size}"
-            return r
-
-        def gen(s=start, n=end - start + 1):
-            with open(p, "rb") as f:
-                f.seek(s)
-                while n > 0:
-                    c = f.read(min(262144, n))
-                    if not c:
-                        break
-                    n -= len(c)
-                    yield c
-
-        r = StreamingHttpResponse(gen(), status=206, content_type=b.mime)
-        r["Content-Range"] = f"bytes {start}-{end}/{b.size}"
-        r["Content-Length"] = str(end - start + 1)
-    else:
-        r = FileResponse(open(p, "rb"), content_type=b.mime)
-    r["Accept-Ranges"] = "bytes"
-    r["ETag"] = etag
-    r["Cache-Control"] = "private, max-age=31536000, immutable"
-    r["X-Content-Type-Options"] = "nosniff"
-    r["Content-Security-Policy"] = "default-src 'none'; sandbox"
-    if b.mime not in INLINE:
-        r["Content-Disposition"] = "attachment"
-    return r
+    try:
+        return files.serve(request, b.path, b.mime, filename=asset_id)
+    except (FileNotFoundError, OSError):
+        return err("not found", 404)
 
 
 def _check_quota(owner, size, replacing):
@@ -126,9 +94,15 @@ def _kind_mime(head, declared, encrypted):
 
 
 def _finish(owner, asset_id, tmp, size, mime):
-    p = _path(owner, asset_id)
-    os.replace(tmp, p)
-    AssetBlob.objects.update_or_create(user=owner, asset_id=asset_id, defaults={"size": size, "mime": mime, "path": str(p)})
+    import secrets
+
+    old = AssetBlob.objects.filter(user=owner, asset_id=asset_id).first()
+    dest = _dir(owner) / secrets.token_hex(16)  # random file name
+    os.replace(tmp, dest)
+    os.chmod(dest, 0o600)
+    if old:
+        files.remove(old.path)
+    AssetBlob.objects.update_or_create(user=owner, asset_id=asset_id, defaults={"size": size, "mime": mime, "path": str(dest)})
 
 
 def _put(request, owner, asset_id):
@@ -144,8 +118,8 @@ def _put(request, owner, asset_id):
     mime = _kind_mime(first, request.META.get("CONTENT_TYPE"), request.headers.get("X-Encrypted") == "1")
     if not mime:
         return err("unsupported file type", 415)
-    d = _path(owner, asset_id).parent
-    d.mkdir(parents=True, exist_ok=True)
+    d = _dir(owner)
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
     tmp = d / (asset_id + ".part")
     written = len(first)
     with open(tmp, "wb") as f:
@@ -173,8 +147,8 @@ def _patch(request, owner, asset_id):
     start, end, total = map(int, m.groups())
     if total > settings.ASSET_MAX_BYTES or end < start or end >= total:
         return err("bad range", 413 if total > settings.ASSET_MAX_BYTES else 400)
-    d = _path(owner, asset_id).parent
-    d.mkdir(parents=True, exist_ok=True)
+    d = _dir(owner)
+    d.mkdir(parents=True, exist_ok=True, mode=0o700)
     tmp = d / (asset_id + ".part")
     have = tmp.stat().st_size if tmp.exists() else 0
     if start == 0 and have:
@@ -217,6 +191,5 @@ def asset_list(request):
 
 @api(("GET",))
 def upload_status(request, asset_id):
-    p = _path(request.user, asset_id) if ID_RE.match(asset_id) else None
-    tmp = p.with_suffix(".part") if p else None
+    tmp = (_dir(request.user) / (asset_id + ".part")) if ID_RE.match(asset_id) else None
     return JsonResponse({"offset": tmp.stat().st_size if tmp and tmp.exists() else 0})

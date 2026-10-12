@@ -10,6 +10,7 @@ urlpatterns = [
     path("auth/logout", views_auth.logout),
     path("auth/refresh", views_auth.refresh),
     path("auth/me", views_auth.me),
+    path("auth/me/stats", views_auth.me_stats),
     path("auth/password", views_auth.change_password),
     path("auth/delete", views_auth.delete_account),
     path("auth/verify", views_auth.verify),
