@@ -15,7 +15,7 @@ export const throttle = (fn, ms = 100) => {
     else { clearTimeout(t); t = setTimeout(() => { last = Date.now(); fn(...a); }, ms - (now - last)); }
   };
 };
-export const stripHtml = (html = '') => { const d = document.createElement('div'); d.innerHTML = html; return d.textContent || ''; };
+export const stripHtml = (html = '') => { const d = document.createElement('div'); d.innerHTML = String(html).replace(/<\/(p|h[1-6]|li|div|tr|blockquote|pre)>|<br\s*\/?>/gi, ' $&'); return (d.textContent || '').replace(/[ \t]+/g, ' ').trim(); };
 export const fmtDate = (ts) => {
   const d = new Date(ts), n = new Date();
   if (d.toDateString() === n.toDateString()) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });

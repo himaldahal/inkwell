@@ -128,7 +128,7 @@ export function countdown(btn, seconds, label) {
 }
 export const bytes = (n = 0) => (n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : n < 1073741824 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1073741824).toFixed(2) + ' GB');
 export const ago = (t) => { if (!t) return 'never'; const s = Math.round((Date.now() - new Date(t).getTime()) / 1000); return s < 10 ? 'just now' : s < 60 ? s + 's ago' : s < 3600 ? Math.round(s / 60) + ' min ago' : s < 86400 ? Math.round(s / 3600) + ' h ago' : new Date(t).toLocaleDateString(); };
-export const errText = (e) => (e?.name === 'TypeError' ? 'Cannot reach the server. Check the address and your connection.' : e?.message || String(e));
+export const errText = (e) => (e?.name === 'TypeError' ? 'Cannot reach the server. Check the address and your connection.' : e?.message || (e ? String(e) : 'Something went wrong. Please try again.'));
 /** only same-app hash targets are allowed as ?next= (no open redirects) */
 export const safeNext = (n) => (typeof n === 'string' && /^\/(?!\/)[\w\-./%?=&]*$/.test(n) && !n.startsWith('/auth') ? n : '/');
 export function spark(series, color = 'var(--accent,#ff9f0a)') {

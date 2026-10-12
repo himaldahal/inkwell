@@ -32,7 +32,7 @@ async function boot() {
   authed = !!(a0?.token && a0?.user?.id);
   switchUser(authed ? a0.user.id : null);
   await loadSettings(); await loadMe();
-  if (PATHS[location.pathname]) history.replaceState(null, '', '/' + PATHS[location.pathname]);
+  if (PATHS[location.pathname.replace(/(.)\/+$/, '$1')]) history.replaceState(null, '', '/' + PATHS[location.pathname.replace(/(.)\/+$/, '$1')]);
   initToasts();
 
   const sidebar = createSidebar();
@@ -241,8 +241,10 @@ async function boot() {
   });
 }
 
+const firstSync = (ms = 8000) => new Promise((res) => { const off = on('sync:status', (st) => { if (st && st.state === 'idle' && st.lastSync) { off(); res(); } }); setTimeout(() => { off(); res(); }, ms); });
 async function onboard() {
   if (await getMeta('onboarded', false)) return;
+  if (navigator.onLine) await firstSync();   // an existing account may already have notes on the server; don't add a duplicate welcome note
   const existing = await getAll('notes');
   await setMeta('onboarded', true);
   if (existing.length) return;

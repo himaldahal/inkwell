@@ -41,6 +41,10 @@ Inkwell is a note-taking app in the spirit of Notability-style apps: write with 
 |---|---|
 | <img src="docs/screenshots/system-analytics-light.png" width="420"> | <img src="docs/screenshots/study-hub-light.png" width="420"> |
 
+| User profile dashboard | CA planner |
+|---|---|
+| <img src="docs/screenshots/profile-dashboard-light.png" width="420"> | <img src="docs/screenshots/study-planner-light.png" width="420"> |
+
 ## Features
 **Writing**
 - Pressure-sensitive ink with palm rejection, smoothing, undo/redo, zoom and pan.
@@ -202,8 +206,10 @@ Deleted notes and notebooks go to Trash and are removed automatically after **60
 ## Sharing & collaboration
 Share a note or notebook with people by e-mail (viewer or editor), or publish a link at `/s/<token>` with optional password, expiry, download toggle and revoke. Collaborators see who is present and an activity timeline ("Alex drew 14 strokes on page 2").
 
-## Admin dashboard
-Staff open `#/admin` in the app: overview charts, user management (create, disable, reset password, quotas, revoke sessions), devices with parsed browser/OS and IP, shares and public links, abuse centre, mail queue and suppress list, storage and trash tools, runtime settings, audit log and system health.
+## Admin dashboard and URLs
+Every note belongs to a signed-in user; there is no anonymous mode. Django's built-in admin is not used. The app's own pages have clean URLs: `/login`, `/register`, `/profile` (user dashboard), `/dashboard` (staff admin dashboard) and `/dashboard/system` (superuser system panel).
+
+Staff open `/dashboard` in the app: overview charts, user management (create, disable, reset password, quotas, revoke sessions), devices with parsed browser/OS and IP, shares and public links, abuse centre, mail queue and suppress list, storage and trash tools, runtime settings, audit log and system health.
 
 ## Project layout
 ```

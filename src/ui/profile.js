@@ -18,6 +18,7 @@ export function mountProfile(el, { navigate = (p) => { location.hash = '#' + p; 
     try {
       me = (await sync.getAccountInfo()).user;
       [stats, devices] = await Promise.all([sync.apiCall('/api/auth/me/stats'), sync.listDevices()]);
+      msg = '';
     } catch (e) { msg = errText(e); }
     paint();
   }
