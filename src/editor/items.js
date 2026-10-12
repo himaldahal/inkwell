@@ -40,7 +40,7 @@ export function paintItem(el, it, pv) {
     if (!t) { t = h('div', { class: 'ik-text' }); el.append(t); }
     if (!el.classList.contains('ik-editing') && t._html !== it.html) { t.innerHTML = it.html || ''; t._html = it.html; }
     t.style.fontSize = (it.fontSize || 20) + 'px'; t.style.color = it.color || '#111827';
-    t.style.textAlign = it.align || 'left';
+    t.style.textAlign = it.align || 'left'; t.style.fontFamily = it.font || '';
   }
 }
 export function itemRect(pv, it) {

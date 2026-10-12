@@ -1,6 +1,7 @@
 // Stroke model helpers: rendering, geometry, hit testing, shape recognition.
 // pts is a flat array [x,y,pressure, x,y,pressure, ...] in page units.
 import { newId } from '../core/utils.js';
+import { drawBrushSeg } from './brushes.js';
 
 export const HL_ALPHA = 0.42;
 export const widthFor = (tool, size, p) =>
@@ -11,6 +12,10 @@ const seedOf = (s) => { let a = 0; const id = s.id || ''; for (let i = 0; i < id
 
 /** Draw one smoothed segment (quadratic through midpoints) of a pen/pencil stroke. */
 export function drawSegment(ctx, s, k) {
+  if (s.brush && s.brush !== 'fine' && !s.shape) return drawBrushSeg(ctx, s, k, plainSegment);
+  plainSegment(ctx, s, k);
+}
+function plainSegment(ctx, s, k) {
   const pts = s.pts, n = pts.length / 3;
   const cx = pts[k * 3], cy = pts[k * 3 + 1];
   const ax = k === 0 ? cx : (pts[k * 3 - 3] + cx) / 2, ay = k === 0 ? cy : (pts[k * 3 - 2] + cy) / 2;

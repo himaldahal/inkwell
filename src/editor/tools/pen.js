@@ -4,7 +4,7 @@ import { drawSegment, drawDot, drawPath, drawStroke, recognizeShape, shapePts, w
 
 export function createPenTool(engine, kind) {
   let s = null, pv = null, ink = null, live = null, drawn = 0, snapped = false, latched = false;
-  let timer = 0, anchor = null, predBox = null, lastP = 0.5;
+  let timer = 0, anchor = null, predBox = null, lastP = 0.5, stab = 0;
   const cfg = () => engine.settings[kind];
   const clearPred = () => {
     if (!predBox || !live) return;
@@ -29,6 +29,8 @@ export function createPenTool(engine, kind) {
       latched = false;
       if (engine.ruler?.on) { engine.applyRuler(pt); latched = !!pt.snapped; }
       s = { id: newId(), tool: kind, color: c.color, size: c.size, pts: [pt.x, pt.y, pt.p] };
+      if (kind === 'pen' && c.brush && c.brush !== 'fine') s.brush = c.brush;
+      stab = c.stab || 0;
       lastP = pt.p; snapped = false; drawn = 0; predBox = null;
       ink = pv.ctx('ink'); live = pv.ctx('live');
       anchor = pt;
@@ -45,6 +47,7 @@ export function createPenTool(engine, kind) {
       }
       if (latched || engine.ruler?.on) { pt.latched = latched; engine.applyRuler(pt); }
       const n = s.pts.length;
+      if (stab > 0) { pt.x = s.pts[n - 3] + (pt.x - s.pts[n - 3]) * (1 - stab); pt.y = s.pts[n - 2] + (pt.y - s.pts[n - 2]) * (1 - stab); }
       const minD = 1 / engine.zoom;
       if (Math.hypot(pt.x - s.pts[n - 3], pt.y - s.pts[n - 2]) < minD) return;
       lastP = lastP * 0.55 + pt.p * 0.45;

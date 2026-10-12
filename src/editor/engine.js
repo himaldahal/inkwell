@@ -399,7 +399,7 @@ export class Engine {
         pv.renderItems();
       } else if (html !== it.html) {
         const fs = parseFloat(t.style.fontSize) || it.fontSize, col = t.style.color || it.color;
-        const n = withData({ ...it, html, text, fontSize: fs, color: col, align: t.style.textAlign || it.align, h: Math.max(it.h, Math.ceil(el.offsetHeight)) });
+        const n = withData({ ...it, html, text, fontSize: fs, color: col, font: t.style.fontFamily || it.font, align: t.style.textAlign || it.align, h: Math.max(it.h, Math.ceil(el.offsetHeight)) });
         pv.page.items = pv.page.items.map((x) => (x === it ? n : x));
         t._html = html;
         this.commit(pv, ed.before);
@@ -447,7 +447,7 @@ export class Engine {
   }
   insertTextBox(pv, x, y, html = '', text = '') {
     const fs = this.settings.text.fontSize, col = this.settings.text.color;
-    const it = withData({ id: newId(), type: 'text', x, y, w: 280, h: Math.round(fs * 1.6), rotation: 0, html, text, fontSize: fs, color: col });
+    const it = withData({ id: newId(), type: 'text', x, y, w: 280, h: Math.round(fs * 1.6), rotation: 0, html, text, fontSize: fs, color: col, font: this.settings.text.font });
     const before = this.snap(pv);
     pv.page.items = [...pv.page.items, it]; pv.renderItems();
     this.startEdit(pv, it.id, before);

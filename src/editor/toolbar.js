@@ -3,6 +3,7 @@ import { h } from '../core/utils.js';
 import { icon } from './icons.js';
 import { ibtn, pref, popover } from './ui.js';
 import { drawStroke } from './stroke.js';
+import { BRUSHES, FONTS } from './brushes.js';
 
 const PALETTE = ['#111827', '#4f46e5', '#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#0891b2', '#9333ea', '#db2777', '#6b7280', '#ffffff'];
 const HL_PALETTE = ['#fde047', '#86efac', '#7dd3fc', '#f9a8d4', '#fdba74', '#c4b5fd', '#fca5a5'];
@@ -42,7 +43,7 @@ export function buildToolbar(engine, act) {
     preview.width = 120 * dpr; preview.height = 40 * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const pts = []; for (let i = 0; i <= 30; i++) { const t = i / 30; pts.push(12 + t * 96, 20 + Math.sin(t * 6.28) * 9, 0.25 + 0.5 * Math.sin(t * 3.14)); }
     if (tool === 'eraser') { ctx.strokeStyle = '#888'; ctx.beginPath(); ctx.arc(60, 20, Math.min(18, c.size), 0, 6.28); ctx.stroke(); return; }
-    drawStroke(ctx, { id: 'prev', tool: tool === 'shape' ? 'pen' : tool, color: c.color, size: Math.min(c.size, 36), pts, shape: tool === 'shape' });
+    drawStroke(ctx, { id: 'prev', brush: tool === 'pen' ? c.brush : undefined, tool: tool === 'shape' ? 'pen' : tool, color: c.color, size: Math.min(c.size, 36), pts, shape: tool === 'shape' });
   }
   function colorRow(tool, c) {
     const row = h('div', { class: 'ik-colors', role: 'radiogroup', 'aria-label': 'Color' });
@@ -108,6 +109,13 @@ export function buildToolbar(engine, act) {
         for (const [k, name] of SHAPES) kinds.append(h('button', { type: 'button', class: 'ik-segb' + (c.kind === k ? ' on' : ''), title: name, onclick: () => engine.set('shape', { kind: k }) }, name));
         opts.append(kinds);
       }
+      if (tool === 'pen') {
+        const sel = h('select', { class: 'ik-ref-sel', 'aria-label': 'Brush', style: { flex: 'none', width: 'auto' } }, ...BRUSHES.map(([id, n]) => h('option', { value: id }, n)));
+        sel.value = c.brush || 'fine'; sel.addEventListener('change', () => engine.set('pen', { brush: sel.value }));
+        const st = h('input', { type: 'range', min: 0, max: 0.9, step: 0.05, value: c.stab || 0, class: 'ik-range', title: 'Stabilizer', 'aria-label': 'Stabilizer', style: { width: '70px' } });
+        st.addEventListener('input', () => engine.set('pen', { stab: +st.value }));
+        opts.append(sel, st);
+      }
       opts.append(colorRow(tool, c), sizeRow(tool, c));
       if (tool === 'pen' || tool === 'highlighter') {
         const sn = h('label', { class: 'ik-check-l', title: 'Hold at the end of a stroke to snap lines and shapes' }, h('input', { type: 'checkbox', checked: c.snap ? '' : null }), 'Snap on hold');
@@ -120,7 +128,10 @@ export function buildToolbar(engine, act) {
       for (const [m, n] of [['stroke', 'Stroke'], ['pixel', 'Pixel']]) seg.append(h('button', { type: 'button', class: 'ik-segb' + (c.mode === m ? ' on' : ''), onclick: () => engine.set('eraser', { mode: m }) }, n));
       opts.append(seg, sizeRow('eraser', c));
     } else if (tool === 'text') {
-      opts.append(textRow(), colorRow('text', c), sizeRow('text', c));
+      const fs = h('select', { class: 'ik-ref-sel', 'aria-label': 'Font', style: { flex: 'none', width: 'auto' } }, ...FONTS.map(([n, f]) => h('option', { value: f }, n)));
+      fs.value = c.font || FONTS[0][1];
+      fs.addEventListener('change', () => { engine.set('text', { font: fs.value }); if (engine.editing) engine.editing.t.style.fontFamily = fs.value; });
+      opts.append(textRow(), fs, colorRow('text', c), sizeRow('text', c));
     } else if (tool === 'select') {
       opts.append(h('span', { class: 'ik-hint' }, 'Draw a loop to select strokes and objects, or tap one. Drag to move, corners to resize.'));
     } else if (tool === 'laser') {
