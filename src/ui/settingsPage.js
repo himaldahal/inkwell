@@ -10,6 +10,7 @@ import { mountSyncSettings } from './syncSettings.js';
 import { getConfig } from './config.js';
 import { SECTIONS, RESETTABLE, SHORTCUT_DEFAULTS, SHORTCUT_LABELS, comboOf, prettyCombo } from './settingsSchema.js';
 import { getNotebooks } from './actions.js';
+import { MODULES, isEnabled, enable, disable } from '../core/modules.js';
 
 const fmtBytes = (b) => (b < 1024 ? b + ' B' : b < 1048576 ? (b / 1024).toFixed(1) + ' KB' : b < 1073741824 ? (b / 1048576).toFixed(1) + ' MB' : (b / 1073741824).toFixed(2) + ' GB');
 const VERSION = '0.1.0';
@@ -124,6 +125,7 @@ export function mountSettings(container) {
       case 'storage': return storageBlock();
       case 'offline': return offlineBlock();
       case 'shortcuts': return shortcutsBlock();
+      case 'modules': return h('div', { 'data-s': 'modules features' }, MODULES.map((m) => row(m.name, m.description + (m.deps.length ? ` Needs: ${m.deps.join(', ')}.` : ''), h('label', { class: 'switch' }, h('input', { type: 'checkbox', checked: isEnabled(m.id), 'aria-label': m.name, onchange: async (e) => { await (e.target.checked ? enable(m.id) : disable(m.id)); paint(); } }), h('span', {})))).map((r, i) => { if (MODULES[i].network) r.querySelector('b').after(h('small', { class: 'net' }, 'Needs network')); return r; }));
       case 'about': return aboutBlock();
       case 'reset': return resetBlock();
       default:

@@ -11,6 +11,7 @@ import { paperEl, newNoteDialog, noteMenuItems, movePicker, tagDialog, quickNote
 import { createSyncPill } from './syncStatus.js';
 import { isNoteLocked, requireUnlock } from './lock.js';
 import { createPreview } from './preview.js';
+import { isEnabled } from '../core/modules.js';
 import { confirmDialog } from './dom.js';
 
 const DT = 'application/x-inkwell';
@@ -56,7 +57,7 @@ export function createLibrary() {
     openMenu([
       { label: 'Note', icon: 'file', onClick: () => newNoteDialog({ notebookId: curNb() }) },
       { label: 'Subject (notebook)', icon: 'folder', onClick: () => import('./dialogs.js').then((m) => m.notebookDialog({ parentId: curNb() })) },
-      { label: 'Import PDF', icon: 'upload', onClick: importPdf },
+      isEnabled('pdf') && { label: 'Import PDF', icon: 'upload', onClick: importPdf },
       { label: 'Quick note', icon: 'zap', onClick: () => quickNote({ notebookId: curNb() }) },
     ], { anchor, title: 'Create' });
   }
@@ -81,7 +82,7 @@ export function createLibrary() {
     if (n && !b) { b = h('span', { class: 'live-badge', title: 'Collaborators are editing now' }, h('i', {}), 'Live'); c.querySelector('.thumb')?.append(b); }
     else if (!n && b) b.remove();
   });
-  on('presence:update', (d) => { if (!d?.noteId) return; const c = (d.users || []).length; if (c) presence.set(d.noteId, c); else presence.delete(d.noteId); paintPresence(); });
+  on('presence:update', (d) => { if (!d?.noteId || !isEnabled('collab')) return; const c = (d.users || []).length; if (c) presence.set(d.noteId, c); else presence.delete(d.noteId); paintPresence(); });
 
   // ----- header -----
   const titleFor = () => {
@@ -223,7 +224,7 @@ export function createLibrary() {
     const thumb = h('div', { class: 'thumb' + (locked ? ' locked' : '') });
     if (n.preview && !locked) thumb.append(h('img', { src: n.preview, alt: '', loading: 'lazy', decoding: 'async', draggable: 'false' }));
     else if (n.preview && locked) thumb.append(h('img', { src: n.preview, alt: '', loading: 'lazy', decoding: 'async', draggable: 'false', class: 'blur' }));
-    else thumb.append(paperEl(n.template, n.paperColor));
+    else { thumb.append(paperEl(n.template, n.paperColor)); if (n.textIndex && !locked) thumb.append(h('div', { class: 'snip-prev' }, n.textIndex.slice(0, 220))); }
     if (locked) thumb.append(h('span', { class: 'lock-badge' }, icon('lock', 20)));
     thumb.append(h('span', { class: 'check', 'aria-hidden': 'true' }, icon('check', 14)));
     const si = A.shareInfo(n);
@@ -250,8 +251,8 @@ export function createLibrary() {
   function paintTop() {
     top.replaceChildren();
     if (route.name === 'trash' && (notes.length || trashNbs.length)) {
-      top.append(h('div', { class: 'banner info' }, icon('info', 18), h('span', { class: 'grow' }, 'Items are deleted forever after 30 days. Tap a note to restore it.'),
-        h('button', { class: 'btn danger sm', type: 'button', onclick: async () => { const c = notes.length + trashNbs.length; if (await confirmDialog({ title: 'Empty trash?', message: `${plural(c, 'item')} will be deleted forever.`, confirmLabel: 'Empty trash', danger: true })) { const k = await A.emptyTrash(); toast(`${plural(k, 'item')} deleted`); } } }, 'Empty trash')));
+      top.append(h('div', { class: 'banner info' }, icon('info', 18), h('span', { class: 'grow' }, 'Items are deleted permanently after 60 days. Tap a note to restore it.'),
+        h('button', { class: 'btn danger sm', type: 'button', onclick: async () => { const c = notes.length + trashNbs.length; if (await confirmDialog({ title: 'Empty trash?', message: `${plural(c, 'item')} will be deleted forever.`, confirmLabel: 'Empty trash', danger: true })) { const k = await A.emptyTrash(); toast(`${plural(k, 'item')} deleted`); } } }, 'Delete all permanently')));
       if (trashNbs.length) top.append(h('div', { class: 'trash-nbs' }, h('h2', { class: 'group-h' }, 'Notebooks'), trashNbs.map((nb) => {
         const left = Math.max(0, Math.ceil((nb.trashedAt + A.TRASH_MS - Date.now()) / 864e5));
         return h('div', { class: 'trash-nb' }, h('span', { class: 'nb-ic', style: { background: (nb.color || '#4f46e5') + '26', color: nb.color } }, nb.icon || '📓'),
@@ -287,7 +288,7 @@ export function createLibrary() {
   function emptyFor() {
     const r = route.name;
     if (query) return emptyState({ icon: 'search', title: 'No matches', text: `Nothing found for "${query}". Try a different word or check the spelling.` });
-    if (r === 'trash') return emptyState({ icon: 'trash', title: 'Trash is empty', text: 'Deleted notes wait here for 30 days before they are removed for good.' });
+    if (r === 'trash') return emptyState({ icon: 'trash', title: 'Trash is empty', text: 'Deleted notes wait here for 60 days before they are removed for good.' });
     if (r === 'archive') return emptyState({ icon: 'archive', title: 'Nothing archived', text: 'Archive notes you are done with. They stay searchable and out of the way.' });
     if (r === 'favorites') return emptyState({ icon: 'star', title: 'No favorites yet', text: 'Star a note from its menu to keep it close.' });
     if (r === 'tag' || r === 'smart') return emptyState({ icon: 'tag', title: 'No notes here', text: 'Nothing matches this filter yet.' });
@@ -328,7 +329,7 @@ export function createLibrary() {
       h('span', { class: 'sel-count', 'aria-live': 'polite' }, none ? 'Select notes' : `${sel.length} selected`),
       h('button', { class: 'btn ghost sm', type: 'button', onclick: () => { const all = selected.size === notes.length; selected.clear(); if (!all) notes.forEach((n) => selected.add(n.id)); syncSel(); } }, selected.size === notes.length && notes.length ? 'Select none' : 'Select all'),
       h('div', { class: 'sel-actions' },
-        trash ? [b('restore', 'Restore', async () => { await A.restoreNotes(sel); done(); }), b('trash', 'Delete', async () => { if (await confirmDialog({ title: 'Delete forever?', message: `${plural(sel.length, 'note')} cannot be recovered.`, confirmLabel: 'Delete', danger: true })) { await A.deleteForever(sel); done(); } }, 'danger')] : [
+        trash ? [b('restore', 'Restore', async () => { await A.restoreNotes(sel); done(); }), b('trash', 'Delete now', async () => { if (await confirmDialog({ title: 'Delete forever?', message: `${plural(sel.length, 'note')} cannot be recovered.`, confirmLabel: 'Delete', danger: true })) { await A.deleteForever(sel); done(); } }, 'danger')] : [
           b('folder', 'Move', async () => { const t = await movePicker({ title: `Move ${plural(sel.length, 'note')} to` }); if (t !== undefined) { await A.moveNotes(sel, t); done(); } }),
           b('tag', 'Tag', async () => { if (await tagDialog(sel)) done(); }),
           b('star', 'Favorite', () => A.toggleFlag(sel, 'favorite')),

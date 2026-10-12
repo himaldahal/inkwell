@@ -23,6 +23,7 @@ export const DEFAULTS = {
   cardSize: 'medium', showPreviews: true, showDates: true, showTags: true, defaultNotebook: null, confirmDelete: false,
   pageSize: 'a4',
   editor: {
+    canvasColor: '#E5E8EE', pageColor: '#FFFFFF',
     highlighter: { color: '#FFD60A', size: 14 }, eraser: { size: 12, mode: 'stroke' },
     palmRejection: 'auto',       // off | auto | strict
     inputMode: 'any',            // any | pencil-only
@@ -38,7 +39,7 @@ export const DEFAULTS = {
   notif: { inApp: true, emailShare: true, emailDigest: false },
   a11y: { largeUI: false, dyslexia: false, srHints: false, colorBlind: 'none' },
   region: { language: 'en', dateFormat: 'auto', timeFormat: 'auto', weekStart: 'sun' },
-  shortcuts: {}, offlineNotebooks: {}, devMode: false,
+  shortcuts: {}, offlineNotebooks: {}, devMode: false, modules: {},
 };
 let cur = { ...DEFAULTS, pen: { ...DEFAULTS.pen }, expanded: {} };
 export const getSettings = () => cur;
@@ -78,6 +79,9 @@ export function applySettings(s = cur) {
   r.style.setProperty('--card-min', { small: '130px', medium: '168px', large: '220px' }[s.cardSize] || '168px');
   const ff = s.a11y?.dyslexia ? 'dyslexia' : s.uiFont;
   r.style.setProperty('--font', { system: 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif', serif: 'Georgia, "Iowan Old Style", serif', mono: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace', dyslexia: '"OpenDyslexic", "Atkinson Hyperlegible", "Comic Sans MS", "Trebuchet MS", sans-serif' }[ff]);
+  const ed = s.editor || {};
+  if (ed.canvasColor && ed.canvasColor.toLowerCase() !== '#e5e8ee') r.style.setProperty('--canvas', ed.canvasColor); else r.style.removeProperty('--canvas');
+  if (ed.pageColor && ed.pageColor.toLowerCase() !== '#ffffff') r.style.setProperty('--page', ed.pageColor); else r.style.removeProperty('--page');
   for (const [k, v] of [['previews', s.showPreviews], ['dates', s.showDates], ['tags', s.showTags]]) r.toggleAttribute('data-hide-' + k, !v);
   try { localStorage.setItem('inkwell:boot', JSON.stringify({ theme: s.theme, accent: s.accent })); } catch { /* ignore */ }
   requestAnimationFrame(() => {

@@ -491,3 +491,6 @@ html.privacy-blur body { filter: blur(30px); }
 .set-card select.input { width: auto; min-width: 140px; } .kbtn { min-width: 120px; font-family: ui-monospace, monospace; }
 .dev-info { font: .78rem/1.5 ui-monospace, monospace; white-space: pre-wrap; color: var(--muted); user-select: text; }
 @media (max-width: 899px) { .set-layout { flex-direction: column; gap: 0; } .set-nav { position: sticky; z-index: 4; top: 0; width: auto; flex-direction: row; overflow-x: auto; background: var(--bg); padding: 6px 0; scrollbar-width: none; } .set-nav a { flex: none; } }
+
+.snip-prev { position: absolute; inset: 0; padding: 12px 10px; font: 500 .62rem/1.35 var(--font); color: #444; overflow: hidden; pointer-events: none; -webkit-mask-image: linear-gradient(#000 70%, transparent); mask-image: linear-gradient(#000 70%, transparent); word-break: break-word; }
+.mod-row small.net { color: var(--warn); margin-left: 6px; }

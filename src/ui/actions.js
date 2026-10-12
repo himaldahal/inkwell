@@ -4,7 +4,7 @@ import { stripHtml } from '../core/utils.js';
 import { getSettings } from '../core/settings.js';
 import { PRESETS, SMART } from './templates.js';
 
-const TRASH_DAYS = 30;
+const TRASH_DAYS = 60;
 export const TRASH_MS = TRASH_DAYS * 864e5;
 
 // ---------- notes ----------
@@ -67,8 +67,11 @@ export async function moveNotes(notes, notebookId) {
     action: { label: 'Undo', onClick: () => patchNotes(ids, (n) => { n.notebookId = before.get(n.id) ?? null; }) },
   });
 }
+/** Permanent delete: assets and note content are wiped now; a tiny tombstone remains so other devices drop it too. */
 export async function deleteForever(notes) {
   for (const id of idsOf(notes)) {
+    const r = await getRecord('notes', id);
+    if (r && !r.deleted) { Object.assign(r, { pages: [], text: '', textIndex: '', preview: null, recordings: [], title: '', tags: [] }); await putRecord('notes', r, { silent: true }); }
     const db = await getDB();
     const assets = await db.getAllFromIndex('assets', 'noteId', id);
     for (const a of assets) if (!a.deleted) await softDelete('assets', a.id);
@@ -166,7 +169,7 @@ export function descendantIds(notebooks, id) {
   return out;
 }
 export const getTrashedNotebooks = async () => (await getAll('notebooks')).filter((n) => n.trashedAt);
-/** moves a notebook, its sub-notebooks and their notes to the trash (restorable for 30 days) */
+/** moves a notebook, its sub-notebooks and their notes to the trash (restorable for 60 days) */
 export async function deleteNotebook(id) {
   const nbs = await getAll('notebooks');
   const ids = descendantIds(nbs, id);

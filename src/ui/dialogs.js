@@ -88,7 +88,7 @@ export async function notebookDialog({ notebook = null, parentId = null } = {}) 
   return saved;
 }
 export async function deleteNotebookFlow(nb) {
-  const ok = await confirmDialog({ title: `Delete "${nb.name}"?`, message: 'The notebook, its sub-notebooks and notes move to Trash. You can restore them for 30 days.', confirmLabel: 'Move to trash', danger: true });
+  const ok = await confirmDialog({ title: `Delete "${nb.name}"?`, message: 'The notebook, its sub-notebooks and notes move to Trash. You can restore them for 60 days.', confirmLabel: 'Move to trash', danger: true });
   if (ok) { await A.deleteNotebook(nb.id); toast('Notebook moved to trash', { action: { label: 'Undo', onClick: () => A.restoreNotebook(nb.id) } }); }
   return ok;
 }
@@ -153,7 +153,7 @@ export async function tagDialog(notes) {
 export function noteMenuItems(note, { onOpen, onSelect, inTrash = note.trashedAt } = {}) {
   if (inTrash) return [
     { label: 'Restore', icon: 'restore', onClick: () => A.restoreNotes([note]) },
-    { label: 'Delete forever', icon: 'trash', danger: true, onClick: async () => { if (await confirmDialog({ title: 'Delete forever?', message: 'This note cannot be recovered.', confirmLabel: 'Delete', danger: true })) { await A.deleteForever([note]); toast('Deleted'); } } },
+    { label: 'Delete permanently now', icon: 'trash', danger: true, onClick: async () => { if (await confirmDialog({ title: 'Delete forever?', message: 'This note cannot be recovered.', confirmLabel: 'Delete', danger: true })) { await A.deleteForever([note]); toast('Deleted'); } } },
   ];
   return [
     onOpen && { label: 'Open', icon: 'open', onClick: onOpen },

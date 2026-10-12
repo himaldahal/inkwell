@@ -26,11 +26,12 @@ export const SECTIONS = [
     S('sort', 'Sort by', [['updated', 'Modified'], ['created', 'Created'], ['title', 'Title']]), S('groupBy', 'Group by', [['none', 'None'], ['date', 'Date'], ['notebook', 'Notebook']]),
     SW('showPreviews', 'Show previews'), SW('showDates', 'Show dates'), SW('showTags', 'Show tags'),
     { key: 'defaultNotebook', label: 'Default notebook', type: 'select', async: 'notebooks', hint: 'Where new notes go' },
-    SW('confirmDelete', 'Confirm before deleting'), { type: 'info', label: 'Trash retention', text: 'Deleted notes stay in Trash for 30 days.' },
+    SW('confirmDelete', 'Confirm before deleting'), { type: 'info', label: 'Trash retention', text: 'Deleted notes stay in Trash for 60 days.' },
     S('defaultTemplate', 'Default page style', TEMPLATES.map((t) => [t.id, t.label])), SEL('pageSize', 'Default page size', [['a4', 'A4'], ['letter', 'Letter'], ['infinite', 'Infinite scroll']]),
     { key: 'defaultPaper', label: 'Default paper color', type: 'paper', options: PAPER_COLORS },
   ] },
   { id: 'editor', title: 'Editor', icon: 'edit', items: [
+    C('editor.canvasColor', 'Editor background'), C('editor.pageColor', 'Default page color'),
     S('pen.tool', 'Default tool', [['pen', 'Pen'], ['pencil', 'Pencil'], ['highlighter', 'Highlighter']]),
     C('pen.color', 'Pen color'), R('pen.size', 'Pen size', 1, 12, .5), C('editor.highlighter.color', 'Highlighter color'), R('editor.highlighter.size', 'Highlighter size', 6, 30, 1),
     R('editor.eraser.size', 'Eraser size', 4, 40, 1), S('editor.eraser.mode', 'Eraser mode', [['stroke', 'Whole stroke'], ['pixel', 'Pixel']]),
@@ -42,6 +43,7 @@ export const SECTIONS = [
     S('editor.toolbarPos', 'Toolbar position', [['top', 'Top'], ['bottom', 'Bottom'], ['left', 'Left'], ['right', 'Right']]), SW('editor.toolbarAutoHide', 'Auto-hide toolbar'),
     SW('editor.leftHanded', 'Left-handed mode'), SW('editor.haptics', 'Haptic feedback'),
   ] },
+  { id: 'modules', title: 'Modules', icon: 'zap', items: [{ type: 'modules' }] },
   { id: 'typing', title: 'Typing & voice', icon: 'keyboard', items: [
     S('typing.font', 'Typing font', [['sans', 'Sans'], ['serif', 'Serif'], ['mono', 'Mono']]), R('typing.size', 'Typing size', 12, 28, 1, null, 'px'),
     SW('typing.spellcheck', 'Spell-check'), SW('typing.autocorrect', 'Autocorrect'),
