@@ -1,6 +1,6 @@
 import { emit } from './store.js';
 
-/** Hash router. Routes: / /all /favorites /recent /archive /trash /search /browse /shared /admin /auth/:sub
+/** Hash router. Routes: / /all /favorites /recent /archive /trash /search /browse /shared /public /s/:token /admin /auth/:sub
  *  /notebook/:id /tag/:t /smart/:id /note/:id /settings */
 let cur = { name: 'all', params: {}, query: {}, path: '/' };
 let prev = null;
@@ -16,7 +16,8 @@ export function parse(hash) {
   let name = 'all', params = {};
   const [a, b] = seg;
   if (!a) name = 'all';
-  else if (['all', 'favorites', 'recent', 'archive', 'trash', 'search', 'browse', 'settings', 'shared', 'admin'].includes(a)) name = a;
+  else if (['all', 'favorites', 'recent', 'archive', 'trash', 'search', 'browse', 'settings', 'shared', 'public', 'admin'].includes(a)) name = a;
+  else if (a === 's' && b) { name = 'sharedview'; params = { token: b }; }
   else if (a === 'auth') { name = 'auth'; params = { sub: b || 'login', rest: seg.slice(2) }; }
   else if (a === 'notebook' && b) { name = 'notebook'; params = { id: b }; }
   else if (a === 'tag' && b) { name = 'tag'; params = { tag: b }; }

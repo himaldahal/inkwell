@@ -88,8 +88,8 @@ export async function notebookDialog({ notebook = null, parentId = null } = {}) 
   return saved;
 }
 export async function deleteNotebookFlow(nb) {
-  const ok = await confirmDialog({ title: `Delete "${nb.name}"?`, message: 'Notes inside are kept and moved up one level. Sub-notebooks move up too.', confirmLabel: 'Delete notebook', danger: true });
-  if (ok) { await A.deleteNotebook(nb.id); toast('Notebook deleted'); }
+  const ok = await confirmDialog({ title: `Delete "${nb.name}"?`, message: 'The notebook, its sub-notebooks and notes move to Trash. You can restore them for 30 days.', confirmLabel: 'Move to trash', danger: true });
+  if (ok) { await A.deleteNotebook(nb.id); toast('Notebook moved to trash', { action: { label: 'Undo', onClick: () => A.restoreNotebook(nb.id) } }); }
   return ok;
 }
 

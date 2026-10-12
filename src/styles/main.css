@@ -404,3 +404,39 @@ kbd { white-space: nowrap; }
   .sync-text { display: none; } .sync-pill { padding: 0 8px; }
 }
 .row-2 { margin-top: 16px; }
+
+/* ---------- modern polish: type, glass, springs ---------- */
+:root { --font: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI Variable", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; --spring: linear(0, .22 4%, .62 9%, .94 15%, 1.06 21%, 1.07 25%, 1.03 33%, .99 42%, 1 55%, 1); --glass: color-mix(in srgb, var(--surface) 72%, transparent); }
+body { font-feature-settings: "cv11", "ss01"; letter-spacing: -.006em; }
+.lib-head { position: sticky; top: 0; z-index: 4; background: color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter: saturate(1.4) blur(18px); -webkit-backdrop-filter: saturate(1.4) blur(18px); }
+.sidebar { background: color-mix(in srgb, var(--surface-2) 88%, transparent); backdrop-filter: blur(20px); }
+.modal, .menu, .toast, .selbar { background: var(--glass); backdrop-filter: saturate(1.5) blur(24px); -webkit-backdrop-filter: saturate(1.5) blur(24px); border: 1px solid color-mix(in srgb, var(--border) 70%, transparent); }
+.toast { background: color-mix(in srgb, #2b2438 86%, transparent); border: 0; }
+.toast.error { background: color-mix(in srgb, #8f1f26 90%, transparent); }
+.modal { box-shadow: 0 30px 80px rgba(20, 10, 40, .32), 0 2px 8px rgba(20, 10, 40, .12); animation: modal-in .45s var(--spring); }
+.menu.sheet, .modal { animation-timing-function: var(--spring); }
+@media (max-width: 699px) { .modal { animation: sheet-in .5s var(--spring); } .menu.sheet { animation: sheet-in .45s var(--spring); } }
+.card .thumb { box-shadow: 0 1px 2px rgba(40, 30, 20, .06), 0 6px 18px -8px rgba(40, 30, 20, .18); }
+.card:hover .thumb { transform: translateY(-3px); box-shadow: 0 12px 28px -10px rgba(40, 30, 20, .35); }
+.btn, .icon-btn, .fab, .tab, .nav-item { transition: transform .35s var(--spring), background .15s, box-shadow .2s; }
+.icon-btn, .nav-item, .btn { will-change: auto; }
+::view-transition-old(root) { animation: vt-out .16s ease both; }
+::view-transition-new(root) { animation: vt-in .26s var(--ease) both; }
+@keyframes vt-out { to { opacity: 0; transform: scale(.995); } }
+@keyframes vt-in { from { opacity: 0; transform: translateY(6px); } }
+@media (prefers-reduced-motion: reduce) { ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) { animation: none !important; } }
+
+/* share badges, trash, presence, pull to refresh */
+.share-badges { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.sb { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: 99px; font-size: .68rem; font-weight: 700; background: var(--surface-2); color: var(--muted); }
+.sb.in { background: color-mix(in srgb, #0ea5e9 16%, transparent); color: #0284c7; } .sb.pub { background: color-mix(in srgb, #10b981 16%, transparent); color: #059669; }
+.days-badge { position: absolute; right: 8px; bottom: 8px; padding: 2px 8px; border-radius: 99px; background: rgba(20, 16, 30, .72); color: #fff; font-size: .72rem; font-weight: 700; backdrop-filter: blur(6px); }
+.days-badge.soon { background: var(--danger); }
+.trash-nbs { display: flex; flex-direction: column; gap: 6px; }
+.trash-nb { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 14px; background: var(--surface); border: 1px solid var(--border); }
+.trash-nb small { display: block; color: var(--muted); }
+.presence { position: fixed; z-index: 45; right: calc(12px + var(--sar)); top: calc(10px + var(--sat)); display: flex; pointer-events: none; }
+.avatar { width: 28px; height: 28px; margin-left: -8px; border-radius: 50%; display: grid; place-items: center; overflow: hidden; border: 2px solid var(--surface); color: #fff; font-size: .68rem; font-weight: 700; box-shadow: var(--shadow-1); }
+.avatar img { width: 100%; height: 100%; object-fit: cover; } .avatar.more { background: var(--surface-3); color: var(--text); }
+.ptr { height: var(--pull, 0px); overflow: hidden; display: grid; place-items: end center; color: var(--muted); transition: height .25s var(--spring); }
+.ptr.pulling { transition: none; } .ptr .ic { margin-bottom: 8px; transform: rotate(calc(var(--pull, 0px) * 4deg)); } .ptr.ready { color: var(--accent); } .ptr.spin .ic { animation: spin .8s linear infinite; }

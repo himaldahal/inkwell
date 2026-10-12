@@ -18,7 +18,7 @@ export function readDrag(e) {
 
 export function createSidebar() {
   const el = h('aside', { class: 'sidebar', 'aria-label': 'Library navigation' });
-  let nbs = [], notes = [];
+  let nbs = [], notes = [], trashedNbs = 0;
 
   const count = (fn) => notes.filter(fn).length;
   const live = (n) => !n.trashedAt;
@@ -66,7 +66,7 @@ export function createSidebar() {
     return frag;
   }
 
-  async function load() { [nbs, notes] = [await A.getNotebooks(), await getAll('notes')]; render(); }
+  async function load() { [nbs, notes, trashedNbs] = [await A.getNotebooks(), await getAll('notes'), (await A.getTrashedNotebooks()).filter((n) => n.trashedBy === n.id || !n.trashedBy).length]; render(); }
   function render() {
     const s = getSettings();
     const expanded = { ...s.expanded };
@@ -92,10 +92,11 @@ export function createSidebar() {
         h('div', { class: 'sb-sec' },
           navItem({ path: '/', key: '/', label: 'All notes', ic: 'file', n: active.length || '', drop: (d) => d.kind === 'notes' && A.moveNotes(d.ids, null) }),
           navItem({ path: '/recent', label: 'Recent', ic: 'clock' }),
-          (live_.some((n) => n.sharedBy) ? navItem({ path: '/shared', label: 'Shared with me', ic: 'link', n: live_.filter((n) => n.sharedBy).length }) : null),
+          (live_.some((n) => A.shareInfo(n).incoming) ? navItem({ path: '/shared', label: 'Shared with me', ic: 'link', n: live_.filter((n) => A.shareInfo(n).incoming).length }) : null),
+          (live_.some((n) => A.shareInfo(n).public) ? navItem({ path: '/public', label: 'Public links', ic: 'link', n: live_.filter((n) => A.shareInfo(n).public).length }) : null),
           navItem({ path: '/favorites', label: 'Favorites', ic: 'star', n: active.filter((n) => n.favorite).length || '' }),
           navItem({ path: '/archive', label: 'Archive', ic: 'archive', n: live_.filter((n) => n.archived).length || '' }),
-          navItem({ path: '/trash', label: 'Trash', ic: 'trash', n: notes.filter((n) => n.trashedAt).length || '' })),
+          navItem({ path: '/trash', label: 'Trash', ic: 'trash', n: (notes.filter((n) => n.trashedAt).length + trashedNbs) || '' })),
         h('div', { class: 'sb-sec' },
           h('div', { class: 'sb-title' }, h('span', {}, 'Notebooks'), iconBtn('plus', 'New notebook', () => notebookDialog(), { size: 16, class: 'sm' })),
           h('div', { role: 'tree', 'aria-label': 'Notebooks', class: 'tree' }, nbs.length ? nbs.filter((n) => !n.parentId || !nbs.some((p) => p.id === n.parentId)).flatMap((n) => nbNode(n, 0, counts, expanded))

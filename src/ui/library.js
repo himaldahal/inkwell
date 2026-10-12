@@ -25,7 +25,7 @@ const TIPS = [
 export function createLibrary() {
   const el = h('section', { class: 'lib-wrap' });
   const preview = createPreview({ onOpen: (id) => openNote(id) });
-  let route = current(), nbs = [], notes = [], query = '', tok = 0, previewId = null, loaded = false;
+  let route = current(), nbs = [], notes = [], trashNbs = [], query = '', tok = 0, previewId = null, loaded = false;
   const selected = new Set(); let selecting = false;
   const cache = new Map();
   let shown = 0, items = [];
@@ -55,7 +55,7 @@ export function createLibrary() {
     const r = route;
     if (query) return 'Search';
     switch (r.name) {
-      case 'favorites': return 'Favorites'; case 'shared': return 'Shared with me'; case 'recent': return 'Recent'; case 'archive': return 'Archive'; case 'trash': return 'Trash';
+      case 'favorites': return 'Favorites'; case 'shared': return 'Shared with me'; case 'public': return 'Public links'; case 'recent': return 'Recent'; case 'archive': return 'Archive'; case 'trash': return 'Trash';
       case 'search': return 'Search'; case 'tag': return '#' + r.params.tag;
       case 'smart': return SMART.find((s) => s.id === r.params.id)?.label || 'Smart filter';
       case 'notebook': { const n = nbs.find((x) => x.id === r.params.id); return n ? n.name : 'Notebook'; }
@@ -144,6 +144,7 @@ export function createLibrary() {
     try { raw = await fetchNotes(); } catch (e) { console.error(e); raw = []; }
     if (my !== tok) return;
     notes = raw; loaded = true;
+    trashNbs = route.name === 'trash' && !query ? (await A.getTrashedNotebooks()).filter((n) => !n.trashedBy || n.trashedBy === n.id) : [];
     for (const id of [...selected]) if (!notes.some((n) => n.id === id)) selected.delete(id);
     items = buildItems(sorted(notes));
     shown = 0; gridEl.replaceChildren();
@@ -151,7 +152,7 @@ export function createLibrary() {
     gridEl.classList.toggle('list', getSettings().view === 'list');
     gridEl.classList.toggle('selecting', selecting);
     body.querySelector('.empty')?.remove();
-    if (!notes.length) { gridEl.hidden = true; body.append(emptyFor()); }
+    if (!notes.length) { gridEl.hidden = true; if (trashNbs.length) { /* notebooks listed above */ } else body.append(emptyFor()); }
     else { gridEl.hidden = false; more(); }
     if (isDesktop() && finePointer()) { if (!notes.some((n) => n.id === previewId)) previewId = null; preview.show(notes.find((n) => n.id === previewId) || null); markPreview(); }
   };
@@ -168,7 +169,7 @@ export function createLibrary() {
     shown = end; gridEl.append(frag);
   }
   function cardFor(n) {
-    const sig = [n.updatedAt, n.pinned, n.favorite, n.archived, n.trashedAt, n.notebookId, (n.tags || []).join(), getSettings().view, !!n.lock, isNoteLocked(n), query].join('|');
+    const sig = [n.updatedAt, n.pinned, n.favorite, n.archived, n.trashedAt, n.notebookId, (n.tags || []).join(), getSettings().view, !!n.lock, isNoteLocked(n), query, JSON.stringify(A.shareInfo(n))].join('|');
     const c = cache.get(n.id);
     let el_ = c && c.sig === sig ? c.el : null;
     if (!el_) { el_ = buildCard(n); cache.set(n.id, { sig, el: el_ }); }
@@ -192,22 +193,39 @@ export function createLibrary() {
     else thumb.append(paperEl(n.template, n.paperColor));
     if (locked) thumb.append(h('span', { class: 'lock-badge' }, icon('lock', 20)));
     thumb.append(h('span', { class: 'check', 'aria-hidden': 'true' }, icon('check', 14)));
+    const si = A.shareInfo(n);
+    const sb = (ic, t) => h('span', { class: 'sbadge', title: t, 'aria-label': t }, icon(ic, 12));
     const badges = h('span', { class: 'badges' }, n.pinned ? icon('pin', 13) : null, n.favorite ? icon('star', 13) : null, n.lock && !locked ? icon('unlock', 13) : null);
+    const shareRow = (si.incoming || si.outgoing || si.public) ? h('div', { class: 'share-badges' },
+      si.incoming ? h('span', { class: 'sb in', title: 'Shared with you' }, icon('link', 11), 'Shared') : null,
+      si.outgoing && !si.incoming ? h('span', { class: 'sb', title: 'You shared this note' }, icon('link', 11), 'Shared') : null,
+      si.public ? h('span', { class: 'sb pub', title: 'Public link' }, icon('open', 11), 'Public') : null,
+      si.canEdit ? h('span', { class: 'sb' }, icon('edit', 11), 'Can edit') : null, si.viewOnly ? h('span', { class: 'sb' }, 'View only') : null,
+      si.protectedLink ? h('span', { class: 'sb', title: 'Password protected' }, icon('lock', 11)) : null) : null;
+    const left = n.trashedAt ? h('span', { class: 'days-badge' + (A.trashDaysLeft(n) <= 3 ? ' soon' : '') }, A.trashDaysLeft(n) + 'd') : null;
+    if (left) thumb.append(left);
     const meta = n.trashedAt ? `${A.trashDaysLeft(n)} days left` : (n.archived ? 'Archived - ' : '') + fmtDate(n.updatedAt) + (nb && route.name !== 'notebook' ? ' - ' + nb.name : '');
     const card = h('article', { class: 'card', role: 'listitem', tabindex: '0', draggable: 'true', 'data-id': n.id, 'aria-label': (n.title || 'Untitled') + ', ' + meta },
       thumb,
       h('div', { class: 'card-body' },
         h('div', { class: 'card-title' }, h('span', { class: 'ellipsis' }, n.title || 'Untitled'), badges),
-        snippet(n), h('div', { class: 'card-meta' }, meta),
+        snippet(n), h('div', { class: 'card-meta' }, meta), shareRow,
         (n.tags || []).length ? h('div', { class: 'card-tags' }, n.tags.slice(0, 3).map((t) => h('span', { class: 'chip' }, '#' + t))) : null),
       h('button', { class: 'row-more card-more', type: 'button', 'aria-label': 'Note actions', tabindex: '-1', 'data-more': '1' }, icon('more', 18)));
     return card;
   }
   function paintTop() {
     top.replaceChildren();
-    if (route.name === 'trash' && notes.length) {
-      top.append(h('div', { class: 'banner info' }, icon('info', 18), h('span', { class: 'grow' }, 'Notes are deleted forever after 30 days.'),
-        h('button', { class: 'btn danger sm', type: 'button', onclick: async () => { if (await confirmDialog({ title: 'Empty trash?', message: `${plural(notes.length, 'note')} will be deleted forever.`, confirmLabel: 'Empty trash', danger: true })) { const c = await A.emptyTrash(); toast(`${plural(c, 'note')} deleted`); } } }, 'Empty trash')));
+    if (route.name === 'trash' && (notes.length || trashNbs.length)) {
+      top.append(h('div', { class: 'banner info' }, icon('info', 18), h('span', { class: 'grow' }, 'Items are deleted forever after 30 days. Tap a note to restore it.'),
+        h('button', { class: 'btn danger sm', type: 'button', onclick: async () => { const c = notes.length + trashNbs.length; if (await confirmDialog({ title: 'Empty trash?', message: `${plural(c, 'item')} will be deleted forever.`, confirmLabel: 'Empty trash', danger: true })) { const k = await A.emptyTrash(); toast(`${plural(k, 'item')} deleted`); } } }, 'Empty trash')));
+      if (trashNbs.length) top.append(h('div', { class: 'trash-nbs' }, h('h2', { class: 'group-h' }, 'Notebooks'), trashNbs.map((nb) => {
+        const left = Math.max(0, Math.ceil((nb.trashedAt + A.TRASH_MS - Date.now()) / 864e5));
+        return h('div', { class: 'trash-nb' }, h('span', { class: 'nb-ic', style: { background: (nb.color || '#4f46e5') + '26', color: nb.color } }, nb.icon || '📓'),
+          h('div', { class: 'grow' }, h('b', {}, nb.name), h('small', {}, `${left} days left`)),
+          h('button', { class: 'btn sm', type: 'button', onclick: async () => { await A.restoreNotebook(nb.id); toast('Notebook restored'); } }, icon('restore', 16), 'Restore'),
+          h('button', { class: 'btn sm danger', type: 'button', onclick: async () => { if (await confirmDialog({ title: `Delete "${nb.name}" forever?`, message: 'Its notes are deleted too.', confirmLabel: 'Delete', danger: true })) { await A.purgeNotebook(nb.id); toast('Deleted'); } } }, 'Delete'));
+      })));
     }
     if (route.name === 'all' && !query && loaded) {
       A.computeStats().then((st) => {
@@ -341,6 +359,26 @@ export function createLibrary() {
     card.classList.add('dragging');
     card.addEventListener('dragend', () => card.classList.remove('dragging'), { once: true });
   });
+
+  // pull to refresh (touch): syncs and reloads
+  const ptr = h('div', { class: 'ptr', 'aria-hidden': 'true' }, icon('refresh', 20));
+  list.insertBefore(ptr, body);
+  let py = null, pd = 0;
+  body.addEventListener('touchstart', (e) => { py = body.scrollTop <= 0 && e.touches.length === 1 ? e.touches[0].clientY : null; pd = 0; }, { passive: true });
+  body.addEventListener('touchmove', (e) => {
+    if (py == null) return;
+    pd = Math.max(0, (e.touches[0].clientY - py) * 0.5);
+    if (pd > 4) { ptr.style.setProperty('--pull', Math.min(pd, 90) + 'px'); ptr.classList.toggle('ready', pd > 64); ptr.classList.add('pulling'); }
+  }, { passive: true });
+  const endPull = async () => {
+    if (py == null) return; const go = pd > 64; py = null; ptr.classList.remove('pulling', 'ready');
+    if (!go) { ptr.style.setProperty('--pull', '0px'); return; }
+    ptr.classList.add('spin'); ptr.style.setProperty('--pull', '48px');
+    try { await (await import('../core/sync.js')).syncNow(); } catch { /* offline or not configured */ }
+    await refresh();
+    ptr.classList.remove('spin'); ptr.style.setProperty('--pull', '0px');
+  };
+  body.addEventListener('touchend', endPull); body.addEventListener('touchcancel', endPull);
 
   on('notes:changed', refreshSoon); on('notebooks:changed', refreshSoon); on('lock:changed', () => { cache.clear(); refreshSoon(); });
   on('settings:changed', (s) => { if (loaded) { cache.clear(); refreshSoon(); } });

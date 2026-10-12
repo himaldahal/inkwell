@@ -77,11 +77,14 @@ export async function deleteForever(notes) {
 export async function emptyTrash() {
   const t = await listNotes({ view: 'trash' });
   await deleteForever(t);
-  return t.length;
+  const nbs = await getTrashedNotebooks();
+  for (const nb of nbs) await softDelete('notebooks', nb.id);
+  return t.length + nbs.length;
 }
 export async function purgeOldTrash() {
   const old = (await listNotes({ view: 'trash' })).filter((n) => Date.now() - n.trashedAt > TRASH_MS);
   if (old.length) await deleteForever(old);
+  for (const nb of (await getTrashedNotebooks()).filter((n) => Date.now() - n.trashedAt > TRASH_MS)) await softDelete('notebooks', nb.id);
 }
 export const trashDaysLeft = (n) => Math.max(0, Math.ceil((n.trashedAt + TRASH_MS - Date.now()) / 864e5));
 
@@ -136,7 +139,7 @@ export async function importImageAsNote(file) {
 }
 
 // ---------- notebooks ----------
-export const getNotebooks = async () => (await getAll('notebooks')).sort((a, b) => (a.order || 0) - (b.order || 0) || (a.name || '').localeCompare(b.name || ''));
+export const getNotebooks = async () => (await getAll('notebooks')).filter((n) => !n.trashedAt).sort((a, b) => (a.order || 0) - (b.order || 0) || (a.name || '').localeCompare(b.name || ''));
 export async function createNotebook({ name, color, icon, parentId = null }) {
   const all = await getAll('notebooks');
   const order = all.reduce((m, n) => Math.max(m, n.order || 0), 0) + 1;
@@ -154,13 +157,30 @@ export function descendantIds(notebooks, id) {
   while (grew) { grew = false; for (const n of notebooks) if (n.parentId && out.has(n.parentId) && !out.has(n.id)) { out.add(n.id); grew = true; } }
   return out;
 }
+export const getTrashedNotebooks = async () => (await getAll('notebooks')).filter((n) => n.trashedAt);
+/** moves a notebook, its sub-notebooks and their notes to the trash (restorable for 30 days) */
 export async function deleteNotebook(id) {
   const nbs = await getAll('notebooks');
-  const me = nbs.find((n) => n.id === id);
-  if (!me) return;
-  for (const c of nbs.filter((n) => n.parentId === id)) await updateNotebook(c.id, { parentId: me.parentId || null });
-  await patchNotes((await getAll('notes')).filter((n) => n.notebookId === id).map((n) => n.id), (n) => { n.notebookId = me.parentId || null; });
-  await softDelete('notebooks', id);
+  const ids = descendantIds(nbs, id);
+  const now = Date.now();
+  for (const nb of nbs.filter((n) => ids.has(n.id) && !n.trashedAt)) { nb.trashedAt = now; nb.trashedBy = id; await putRecord('notebooks', nb, { silent: true }); }
+  await patchNotes((await getAll('notes')).filter((n) => ids.has(n.notebookId) && !n.trashedAt).map((n) => n.id), (n) => { n.trashedAt = now; n.trashedBy = id; });
+  emit('notebooks:changed', { bulk: true });
+}
+export async function restoreNotebook(id) {
+  const nbs = await getAll('notebooks');
+  const group = nbs.filter((n) => n.trashedBy === id || n.id === id);
+  const gids = new Set(group.map((n) => n.id));
+  const parent = nbs.find((n) => n.id === (group.find((n) => n.id === id)?.parentId));
+  for (const nb of group) { nb.trashedAt = null; delete nb.trashedBy; if (nb.id === id && parent?.trashedAt) nb.parentId = null; await putRecord('notebooks', nb, { silent: true }); }
+  await patchNotes((await getAll('notes')).filter((n) => n.trashedBy === id).map((n) => n.id), (n) => { n.trashedAt = null; delete n.trashedBy; });
+  emit('notebooks:changed', { bulk: true });
+}
+export async function purgeNotebook(id) {
+  const nbs = await getAll('notebooks');
+  const group = nbs.filter((n) => n.trashedBy === id || n.id === id);
+  await deleteForever((await getAll('notes')).filter((n) => n.trashedBy === id));
+  for (const nb of group) await softDelete('notebooks', nb.id);
 }
 export function notebookPath(nbs, id) {
   const parts = []; let cur = nbs.find((n) => n.id === id); let guard = 0;
@@ -176,7 +196,8 @@ export async function loadView(route, notebooks) {
     const ids = descendantIds(notebooks, route.params.id);
     return (await listNotes({ view: 'all' })).filter((x) => ids.has(x.notebookId));
   }
-  if (n === 'shared') return (await listNotes({ view: 'all' })).filter((x) => x.sharedBy);
+  if (n === 'public') return (await listNotes({ view: 'all' })).filter((x) => shareInfo(x).public);
+  if (n === 'shared') return (await listNotes({ view: 'all' })).filter((x) => shareInfo(x).incoming);
   if (n === 'tag') return listNotes({ view: 'tag', tag: route.params.tag });
   if (n === 'smart') { const f = SMART.find((s) => s.id === route.params.id); return (await listNotes({ view: 'all' })).filter((x) => f?.test(x)); }
   return listNotes({ view: 'all' });
@@ -190,3 +211,17 @@ export async function computeStats() {
   return { notes: notes.length, streak, week: notes.filter((n) => n.updatedAt > Date.now() - 7 * 864e5).length, pdfs: notes.filter((n) => (n.pages || []).some((p) => p.type === 'pdf')).length };
 }
 export { getAllRaw };
+
+/** Defensive reader for sharing metadata that the sync layer may attach to a note. */
+export function shareInfo(n) {
+  const sh = n.share || n.sharing || {};
+  const role = n.sharedRole || n.role || sh.role || sh.permission || n.permission || null;
+  const outgoing = !!(n.shared || sh.shared || (Array.isArray(n.sharedWith) ? n.sharedWith.length : n.sharedWith) || (Array.isArray(n.shares) && n.shares.length));
+  return {
+    incoming: !!n.sharedBy, outgoing,
+    public: !!(n.publicLink || n.publicToken || n.isPublic || sh.public || sh.token),
+    protectedLink: !!(n.publicPassword || n.passwordProtected || sh.password || sh.passwordProtected),
+    canEdit: role === 'editor' || role === 'edit' || role === 'can-edit',
+    viewOnly: role === 'viewer' || role === 'view' || role === 'view-only',
+  };
+}

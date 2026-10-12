@@ -44,16 +44,17 @@ async function boot() {
   let notePage = null, noteId = null, settingsMounted = null;
   async function apply(r) {
     const inNote = r.name === 'note';
-    const inAuth = r.name === 'auth';
+    const inAuth = r.name === 'auth' || r.name === 'sharedview';
     authScreen.hidden = !inAuth;
     app.hidden = inAuth;
     if (inAuth) {
       noteScreen.hidden = true;
-      const m = await loadUi('auth');
-      const fn = m && (m.mountAuth || m.mount || m.default);
+      const view = r.name === 'sharedview';
+      const m = await loadUi(view ? 'shareView' : 'auth');
+      const fn = m && (view ? (m.mountShareView || m.mountShared || m.mount) : (m.mountAuth || m.mount)) || m?.default;
       authScreen.replaceChildren();
-      if (fn) fn(authScreen, { sub: r.params.sub, rest: r.params.rest, query: r.query, navigate });
-      else authScreen.append(h('div', { class: 'note-state' }, h('h3', {}, 'Account pages are not available yet'), h('a', { class: 'btn', href: '#/' }, 'Back to library')));
+      if (fn) fn(authScreen, { sub: r.params.sub, rest: r.params.rest, token: r.params.token, query: r.query, navigate });
+      else authScreen.append(h('div', { class: 'note-state' }, h('h3', {}, 'This page is not available yet'), h('a', { class: 'btn', href: '#/' }, 'Back to library')));
       return;
     }
     document.documentElement.classList.toggle('in-note', inNote);
@@ -88,7 +89,13 @@ async function boot() {
     announcer.textContent = label;
     if (!inNote) document.title = (label === 'Library' ? 'Inkwell' : label + ' - Inkwell');
   }
-  on('route:changed', apply);
+  on('route:changed', (r) => {
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches || getSettings().reducedMotion;
+    if (document.startViewTransition && !reduce && !document.querySelector('.backdrop')) {
+      try { document.startViewTransition(() => apply(r)); return; } catch { /* fall through */ }
+    }
+    apply(r);
+  });
 
   // ----- online/offline -----
   const net = () => { offline.hidden = navigator.onLine; };
