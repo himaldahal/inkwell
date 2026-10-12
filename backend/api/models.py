@@ -184,6 +184,8 @@ class Profile(models.Model):
     email_verified = models.BooleanField(default=False)
     must_change_password = models.BooleanField(default=False)
     avatar_id = models.CharField(max_length=32, blank=True, default="")
+    settings_json = models.TextField(default="")
+    settings_at = models.BigIntegerField(default=0)
     totp_secret = models.CharField(max_length=40, blank=True, default="")
     totp_enabled = models.BooleanField(default=False)
     totp_last_step = models.BigIntegerField(default=0)

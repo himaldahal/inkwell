@@ -447,3 +447,26 @@ def logout_all(request):
     Token.objects.filter(user=request.user).exclude(pk=request.token.pk).delete()
     audit(request, "logout_all", request.user)
     return JsonResponse({"ok": True})
+
+
+@api(("GET", "PUT"))
+def account_settings(request):
+    """Small JSON blob of app settings that follows the account (last write wins)."""
+    import json as _j
+
+    p = Profile.of(request.user)
+    if request.method == "PUT":
+        b = parse_json(request) or {}
+        data, at = b.get("settings"), int(b.get("updatedAt") or 0)
+        if not isinstance(data, dict) or len(_j.dumps(data)) > 32768:
+            return err("settings must be a JSON object up to 32 KB", 413)
+        try:
+            validate._walk(data, 0, [5000])
+        except ValueError as e:
+            return err(str(e))
+        if at and at < p.settings_at:
+            return JsonResponse({"conflict": True, "updatedAt": p.settings_at})
+        p.settings_json, p.settings_at = _j.dumps(data), min(at or now_ms(), now_ms() + 300000)
+        p.save(update_fields=["settings_json", "settings_at"])
+        return JsonResponse({"ok": True, "updatedAt": p.settings_at})
+    return JsonResponse({"settings": _j.loads(p.settings_json) if p.settings_json else None, "updatedAt": p.settings_at})

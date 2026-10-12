@@ -27,6 +27,7 @@ urlpatterns = [
     path("blocks", views_share.blocks),
     path("report", views_share.report_abuse),
     path("admin/reports/<str:rid>", views_admin.report_resolve),
+    path("settings", views_auth.account_settings),
     path("devices", views_auth.devices),
     path("devices/<str:device_id>", views_auth.device_detail),
     path("sync/pull", views_sync.pull),
