@@ -71,6 +71,13 @@ function drawStroke(ctx, s) {
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   ctx.strokeStyle = ctx.fillStyle = s.color || '#000';
   const tool = toolOf(s);
+  if (s.shape && n > 1) { // shapes keep their straight edges and sharp corners
+    ctx.lineWidth = size; ctx.globalAlpha = s.alpha ?? 1; if (s.dash) ctx.setLineDash([size * 2.2, size * 2.2]);
+    ctx.beginPath(); ctx.moveTo(p[0], p[1]);
+    for (let i = 1; i < n; i++) (p[i * 3 + 2] < 0 ? ctx.moveTo(p[i * 3], p[i * 3 + 1]) : ctx.lineTo(p[i * 3], p[i * 3 + 1]));
+    if (s.fill) { ctx.fillStyle = s.fill; ctx.fill(); }
+    ctx.stroke(); ctx.restore(); return;
+  }
   if (tool === 'watercolor') ctx.globalAlpha = 0.4;
   if (tool === 'highlighter') {
     ctx.globalAlpha = 0.35; ctx.globalCompositeOperation = 'multiply';
@@ -278,7 +285,7 @@ export function strokeOutlinePath(s) {
   if (pts.length < 2) return null;
   const hl = toolOf(s) === 'highlighter', pencil = toolOf(s) === 'pencil';
   // smooth pressure and positions a little
-  let w = pts.map((q) => (hl ? size : size * (pencil ? 0.5 + 0.8 * q.p : 0.35 + 1.3 * q.p)));
+  let w = pts.map((q) => (hl ? size : size * (pencil ? 0.6 + 0.8 * q.p : 0.3 + 1.4 * q.p)));
   w = w.map((v, i) => (i && i < w.length - 1 ? (w[i - 1] + 2 * v + w[i + 1]) / 4 : v));
   const sm = pts.map((q, i) => (i && i < pts.length - 1
     ? { x: (pts[i - 1].x + 2 * q.x + pts[i + 1].x) / 4, y: (pts[i - 1].y + 2 * q.y + pts[i + 1].y) / 4 } : q));
@@ -448,6 +455,15 @@ async function drawPageItemsAndStrokes(out, pg, page, note, lib, fonts, scale) {
   }
   // ink as vector polygons
   for (const s of live(page.strokes)) {
+    if (s.shape && (s.pts?.length || 0) >= 6) { // shapes: exact straight edges, stroked (and filled when they have a fill)
+      try {
+        const q = s.pts, c0 = parseColor(s.color); let d = '';
+        for (let i = 0; i < q.length; i += 3) d += (i === 0 || q[i + 2] < 0 ? 'M' : 'L') + q[i] + ' ' + q[i + 1] + ' ';
+        const fillC = s.fill ? parseColor(s.fill) : null;
+        pg.drawSvgPath(d, { x: 0, y: Hp, scale: K, borderColor: rgb(...c0.rgb), borderWidth: (s.size || 3), borderOpacity: (s.alpha ?? 1) * c0.a, ...(fillC ? { color: rgb(...fillC.rgb), opacity: fillC.a } : {}) });
+        continue;
+      } catch { /* fall through to the outline renderer */ }
+    }
     const d = strokeOutlinePath(s);
     const c = parseColor(s.color);
     const hl = toolOf(s) === 'highlighter';

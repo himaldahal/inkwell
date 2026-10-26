@@ -32,9 +32,8 @@ export function drawLayout(ctx, w, h, ops, dark) {
     },
     l(x, y, ww, n, gap = 30) { ctx.strokeStyle = P.line; ctx.beginPath(); for (let i = 0; i < n; i++) { ctx.moveTo(X(x), Y(y) + i * gap * u); ctx.lineTo(X(x + ww), Y(y) + i * gap * u); } ctx.stroke(); },
     c(x, y, ww, n, gap = 34) {
-      ctx.strokeStyle = P.line; ctx.beginPath();
-      for (let i = 0; i < n; i++) { const yy = Y(y) + i * gap * u; rr(ctx, X(x), yy - 14 * u, 15 * u, 15 * u, 4 * u); ctx.moveTo(X(x) + 24 * u, yy); ctx.lineTo(X(x + ww), yy); }
-      ctx.stroke();
+      ctx.strokeStyle = P.line;
+      for (let i = 0; i < n; i++) { const yy = Y(y) + i * gap * u; rr(ctx, X(x), yy - 14 * u, 15 * u, 15 * u, 4 * u); ctx.moveTo(X(x) + 24 * u, yy); ctx.lineTo(X(x + ww), yy); ctx.stroke(); }
     },
     g(x, y, ww, hh, cols, rows, o = {}) {
       const cw = Array.isArray(cols) ? cols : Array(cols).fill(1), cs = cw.reduce((a, b) => a + b, 0), x0 = X(x), y0 = Y(y), W = X(ww), H = Y(hh), hh0 = o.hh ? o.hh * u : 0;
