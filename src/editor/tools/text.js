@@ -24,7 +24,7 @@ export function createTextTool(engine) {
         if (s.moved) engine.commit(pv, s.before); else engine.startEdit(pv, s.it.id);
       } else if (!s.moved) {
         const fs = engine.settings.text.fontSize;
-        engine.insertTextBox(pv, pv.canvas ? pt.x : Math.max(0, Math.min(pv.w - 80, pt.x)), pv.canvas ? pt.y - fs * 0.8 : Math.max(0, pt.y - fs * 0.8));
+        engine.insertTextBox(pv, pv.free ? pt.x : Math.max(0, Math.min(pv.w - 80, pt.x)), pv.free ? pt.y - fs * 0.8 : Math.max(0, pt.y - fs * 0.8));
       }
     },
     cancel() { if (st?.before) { const pv = engine.currentPv(); void pv; } st = null; },

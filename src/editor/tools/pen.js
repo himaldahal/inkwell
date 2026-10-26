@@ -1,10 +1,11 @@
 // Pen / highlighter / pencil: low-latency incremental drawing, pressure, smoothing, hold-to-snap shapes, ruler.
 import { newId } from '../../core/utils.js';
+import { createInkFilter } from './smooth.js';
 import { drawSegment, drawDot, drawPath, drawStroke, recognizeShape, shapePts, widthFor } from '../stroke.js';
 
 export function createPenTool(engine, kind) {
   let s = null, pv = null, ink = null, live = null, drawn = 0, snapped = false, latched = false;
-  let pm = false, curve = 1, timer = 0, anchor = null, predBox = null, lastP = 0.5, stab = 0;
+  let flt = null, pm = false, curve = 1, timer = 0, anchor = null, predBox = null, lastP = 0.5, stab = 0;
   const cfg = () => engine.settings[kind];
   const clearPred = () => {
     if (!predBox || !live) return;
@@ -35,6 +36,7 @@ export function createPenTool(engine, kind) {
       if (c.taper != null && kind === 'pen') s.taper = c.taper;
       if (kind === 'pen' && c.brush && c.brush !== 'fine') s.brush = c.brush;
       stab = c.stab ?? engine.prefs.smoothing ?? 0;
+      flt = createInkFilter(pt.type === 'pen' ? 'pen' : pt.type === 'touch' ? 'touch' : 'mouse'); flt.reset(pt.x, pt.y, pt.t);
       lastP = pt.p; snapped = false; drawn = 0; predBox = null;
       ink = pv.ctx('ink'); live = pv.ctx('live');
       anchor = pt;
@@ -50,6 +52,7 @@ export function createPenTool(engine, kind) {
         return;
       }
       if (latched || engine.ruler?.on) { pt.latched = latched; engine.applyRuler(pt); }
+      if (!latched && !engine.ruler?.on && flt) { const q = flt.step(pt.x, pt.y, pt.t, engine.zoom); pt.x = q.x; pt.y = q.y; }
       const n = s.pts.length;
       if (stab > 0) { pt.x = s.pts[n - 3] + (pt.x - s.pts[n - 3]) * (1 - stab); pt.y = s.pts[n - 2] + (pt.y - s.pts[n - 2]) * (1 - stab); }
       const minD = 1 / engine.zoom;
@@ -79,10 +82,14 @@ export function createPenTool(engine, kind) {
       live.stroke(); live.restore();
       const pad = s.size * 1.6 + 2; predBox = { x0: x0 - pad, y0: y0 - pad, x1: x1 + pad, y1: y1 + pad };
     },
-    up() {
+    up(pt) {
       if (!s) return;
       clearTimeout(timer); clearPred();
       const st = s; s = null;
+      if (!snapped && st.pts.length > 3 && pt) { // land the stroke exactly where the pen lifted
+        const n = st.pts.length, ex = pt.x, ey = pt.y;
+        if (Math.hypot(ex - st.pts[n - 3], ey - st.pts[n - 2]) > 0.6 / engine.zoom && Math.hypot(ex - st.pts[n - 3], ey - st.pts[n - 2]) < 40 / engine.zoom) st.pts.push(ex, ey, st.pts[n - 1]);
+      }
       if (!snapped && !pm) {
         const m = st.pts.length / 3;
         if (m === 1 && kind === 'pencil') drawDot(ink, st);

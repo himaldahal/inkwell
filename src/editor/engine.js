@@ -18,7 +18,7 @@ import { createSelectTool } from './tools/select.js';
 import { createTextTool } from './tools/text.js';
 import { createShapeTool } from './tools/shape.js';
 import { createLaserTool } from './tools/laser.js';
-import { CAM_MIN, CAM_MAX, contentBounds, isCanvasNote } from './canvasmode.js';
+import { CAM_MIN, CAM_MAX, contentBounds, isCamNote, sheetPages, pageH } from './canvasmode.js';
 
 export const MIN_ZOOM = 0.3, MAX_ZOOM = 4;
 const lazy = (f) => { let p; return () => (p ||= f().catch((e) => { console.warn('optional module unavailable', e); return null; })); };
@@ -92,7 +92,10 @@ export class Engine {
   // ---- events ----
   on(evt, fn) { (this.listeners[evt] ||= new Set()).add(fn); return () => this.listeners[evt].delete(fn); }
   emit(evt, d) { this.listeners[evt]?.forEach((f) => { try { f(d); } catch (e) { console.error(e); } }); }
-  changed(pv, kind) { this.emit('change', { page: pv?.page, kind }); }
+  changed(pv, kind) {
+    if (pv?.seamless && pv.fitSheet()) { pv.redraw(); this.emit('sheet', pv); this._camMoved(pv); }
+    this.emit('change', { page: pv?.page, kind });
+  }
 
   // ---- settings / tools ----
   get tool() { return this.settings.tool; }
@@ -128,8 +131,15 @@ export class Engine {
     const cp = this.camPv();
     this.pagesEl.classList.toggle('ik-canvasmode', !!cp);
     if (cp) {
-      if (!cp.page.cam) cp.page.cam = { x: -this.scroll.clientWidth / 2, y: -this.scroll.clientHeight / 2, z: 1 };
-      this.fit = false; this.zoom = cp.cam.z; this.addBtn.hidden = true;
+      this.addBtn.hidden = true;
+      if (cp.seamless) {
+        cp.fitSheet(); const z = this.fitZoom();
+        if (!cp.page.cam) cp.page.cam = { x: 0, y: -86 / z, z };
+        this.fit = true; this.zoom = cp.cam.z = z;
+      } else {
+        if (!cp.page.cam) cp.page.cam = { x: -this.scroll.clientWidth / 2, y: -this.scroll.clientHeight / 2, z: 1 };
+        this.fit = false; this.zoom = cp.cam.z;
+      }
     }
     this.pagesEl.append(this.addBtn);
     this.applyZoom(cp ? cp.cam.z : this.fit ? this.fitZoom() : this.zoom, null, true);
@@ -139,7 +149,9 @@ export class Engine {
     this.emit('pages');
   }
   /** the free-canvas page when this note is a canvas note, else null */
-  camPv() { return isCanvasNote(this.note) ? this.pvs[0] || null : null; }
+  camPv() { return isCamNote(this.note) ? this.pvs[0] || null : null; }
+  /** number of (virtual) pages: seamless sheets are cut into pages at their breaks */
+  pageCount() { const c = this.camPv(); return c?.seamless ? Math.round(c.page.height / pageH(c.page)) : this.note.pages.length; }
   pvOf(page) { return this.pvs.find((p) => p.page === page); }
   pvById(id) { return this.pvs.find((p) => p.page.id === id); }
   pvAtClient(x, y) {
@@ -161,6 +173,8 @@ export class Engine {
     }
   }
   goToPage(i, smooth = true) {
+    const cp = this.camPv();
+    if (cp?.seamless) { const n = this.pageCount(); return this.flyTo(cp, { x: cp.cam.x, y: clamp(i, 0, n - 1) * pageH(cp.page) - 20 / cp.cam.z, z: cp.cam.z }, smooth); }
     const pv = this.pvs[clamp(i, 0, this.pvs.length - 1)]; if (!pv) return;
     const r = pv.el.getBoundingClientRect(), s = this.scroll.getBoundingClientRect();
     this.scroll.scrollTo(this.prefs.horiz ? { left: this.scroll.scrollLeft + r.left - s.left - 12, behavior: smooth ? 'smooth' : 'auto' } : { top: this.scroll.scrollTop + r.top - s.top - 12, behavior: smooth ? 'smooth' : 'auto' });
@@ -169,10 +183,10 @@ export class Engine {
   // ---- zoom ----
   fitZoom() {
     const maxW = Math.max(...this.note.pages.map((p) => p.width), 300);
-    const pad = this.scroll.clientWidth < 700 ? 8 : 40;
-    return clamp((this.scroll.clientWidth - pad) / maxW, MIN_ZOOM, MAX_ZOOM);
+    const pad = this.scroll.clientWidth < 700 ? 8 : 40, z = (this.scroll.clientWidth - pad) / maxW;
+    return clamp(this.camPv()?.seamless ? Math.min(z, 1.3) : z, MIN_ZOOM, MAX_ZOOM);
   }
-  fitWidth() { if (this.camPv()) return this.fitContent(); this.fit = true; this.applyZoom(this.fitZoom()); }
+  fitWidth() { if (this.camPv() && !this.camPv().seamless) return this.fitContent(); this.fit = true; this.applyZoom(this.fitZoom()); }
   /** canvas: frame everything on the board (or reset to the origin when empty) */
   fitContent(smooth = true) {
     const pv = this.camPv(); if (!pv) return;
@@ -197,6 +211,11 @@ export class Engine {
     this._fly = requestAnimationFrame(step);
   }
   _camMoved(pv) {
+    if (pv.seamless) {
+      const H = pageH(pv.page), n = Math.round(pv.page.height / H), c = pv.cam;
+      const idx = clamp(Math.floor((c.y + Math.min(pv.vh * 0.4, 300) / c.z) / H), 0, n - 1);
+      if (idx !== this.cur || n !== this._pn) { this.cur = idx; this._pn = n; this.emit('page', { index: idx, count: n, id: pv.page.id }); }
+    }
     this.renderSelection(); if (this.peers.length) this.renderPresence();
     this.emit('cam', pv); this.emit('zoom', pv.cam.z);
   }
@@ -212,7 +231,7 @@ export class Engine {
   applyZoom(z, anchor, quiet) {
     const cp = this.camPv();
     if (cp) {
-      z = clamp(z, CAM_MIN, CAM_MAX);
+      z = clamp(z, ...cp.zoomRange());
       const cam = cp.cam, r = cp.el.getBoundingClientRect();
       const ax = anchor ? anchor.x - r.left : (cp.vw || r.width) / 2, ay = anchor ? anchor.y - r.top : (cp.vh || r.height) / 2;
       const wx = cam.x + ax / cam.z, wy = cam.y + ay / cam.z;
@@ -234,7 +253,7 @@ export class Engine {
     this.emit('zoom', z);
   }
   _settle = (() => { let t; return () => { clearTimeout(t); t = setTimeout(() => { for (const pv of this.pvs) pv.rescale(); this.renderSelection(); }, 140); }; })();
-  onResize() { const cp = this.camPv(); if (cp) this.applyZoom(cp.cam.z, null, true); else if (this.fit) this.applyZoom(this.fitZoom(), null, true); }
+  onResize() { const cp = this.camPv(); if (cp) this.applyZoom(cp.seamless && this.fit ? this.fitZoom() : cp.cam.z, null, true); else if (this.fit) this.applyZoom(this.fitZoom(), null, true); }
 
   // ---- history helpers ----
   snap(pv) { return { strokes: pv.page.strokes.slice(), items: pv.page.items.slice() }; }
@@ -518,7 +537,7 @@ export class Engine {
       seedUrl(rec.id, blob);
       const dw = Math.min(w, pv.w * 0.6, 520), dh = dw * (hh / w);
       const c = at || this.visibleCenter(pv);
-      this.addItem(pv, { id: newId(), type: 'image', assetId: rec.id, x: pv.canvas ? c.x - dw / 2 : clamp(c.x - dw / 2, 0, pv.w - dw), y: pv.canvas ? c.y - dh / 2 : clamp(c.y - dh / 2, 0, Math.max(0, pv.h - dh)), w: dw, h: dh, rotation: 0 });
+      this.addItem(pv, { id: newId(), type: 'image', assetId: rec.id, x: pv.free ? c.x - dw / 2 : clamp(c.x - dw / 2, 0, pv.w - dw), y: pv.free ? c.y - dh / 2 : clamp(c.y - dh / 2, 0, Math.max(0, pv.h - dh)), w: dw, h: dh, rotation: 0 });
       this.setTool('select');
     } catch (e) { console.warn(e); toast('Could not add that image'); }
   }
@@ -539,7 +558,7 @@ export class Engine {
 
   insertEmbed(info, pv = this.currentPv()) {
     const c = this.visibleCenter(pv), w = info.kind === 'audio' ? 360 : info.kind === 'link' ? 340 : 480, hh = info.kind === 'audio' ? 90 : info.kind === 'link' ? 110 : 300;
-    this.addItem(pv, { id: newId(), type: 'embed', url: info.url, embedUrl: info.embedUrl, provider: info.provider, kind: info.kind, title: info.title, x: pv.canvas ? c.x - w / 2 : Math.max(0, c.x - w / 2), y: pv.canvas ? c.y - hh / 2 : Math.max(0, c.y - hh / 2), w, h: hh, rotation: 0 });
+    this.addItem(pv, { id: newId(), type: 'embed', url: info.url, embedUrl: info.embedUrl, provider: info.provider, kind: info.kind, title: info.title, x: pv.free ? c.x - w / 2 : Math.max(0, c.x - w / 2), y: pv.free ? c.y - hh / 2 : Math.max(0, c.y - hh / 2), w, h: hh, rotation: 0 });
   }
   insertFrame(title, box) {
     const pv = this.currentPv(), c = this.visibleCenter(pv), b = box || { x0: c.x - 200, y0: c.y - 130, x1: c.x + 200, y1: c.y + 130 };
@@ -734,10 +753,15 @@ export class Engine {
     const org = pv._org;
     const cx = e.clientX, cy = e.clientY;
     const cm = pv.canvas ? pv.cam : { x: 0, y: 0 };
-    const x = (cx - (org.left - (this.scroll.scrollLeft - org.sl))) / this.zoom + cm.x;
-    const y = (cy - (org.top - (this.scroll.scrollTop - org.st))) / this.zoom + cm.y;
+    let x = (cx - (org.left - (this.scroll.scrollLeft - org.sl))) / this.zoom + cm.x;
+    let y = (cy - (org.top - (this.scroll.scrollTop - org.st))) / this.zoom + cm.y;
     let p = e.pressure;
     if (e.pointerType === 'mouse' || !p) p = 0.5;
+    if (pv.seamless) { // keep ink on the sheet, and grow it before the pen reaches the bottom edge
+      const W = pv.page.width, H = pageH(pv.page);
+      x = Math.min(W, Math.max(0, x)); y = Math.max(0, y);
+      if (y > pv.page.height - H * 0.12 && this.mode === 'tool') { pv.page.height += H; pv.redraw(); this.emit('sheet', pv); this._camMoved(pv); }
+    }
     return { pv, x, y, p, e, cx, cy, type: e.pointerType, t: e.timeStamp };
   }
   _org(pv) { const r = pv.el.getBoundingClientRect(); pv._org = { left: r.left, top: r.top, sl: this.scroll.scrollLeft, st: this.scroll.scrollTop }; }
@@ -874,7 +898,7 @@ export class Engine {
 
   // auto-scroll when drawing near the viewport edge
   _autoscrollStart() {
-    if (this._asRaf || this.prefs.autoScroll === false || this.camPv()) return;
+    if (this._asRaf || this.prefs.autoScroll === false || (this.camPv() && !this.camPv().seamless)) return;
     const tick = () => {
       this._asRaf = 0;
       if (this.mode !== 'tool' || !this.lastClient || !DRAW_TOOLS.concat(['eraser', 'select']).includes(this._tool())) return;
@@ -884,9 +908,10 @@ export class Engine {
       if (x > r.right - E) dx = (x - (r.right - E)) / 3; else if (x < r.left + E) dx = -(r.left + E - x) / 3;
       dx = clamp(dx, -18, 18); dy = clamp(dy, -18, 18);
       if (dx || dy) {
-        const b = [this.scroll.scrollLeft, this.scroll.scrollTop];
-        this.scroll.scrollLeft += dx; this.scroll.scrollTop += dy;
-        if (b[0] !== this.scroll.scrollLeft || b[1] !== this.scroll.scrollTop) {
+        const cp = this.camPv(), b = cp ? [cp.cam.x, cp.cam.y] : [this.scroll.scrollLeft, this.scroll.scrollTop];
+        if (cp) this._panBy(-dx, -dy); else { this.scroll.scrollLeft += dx; this.scroll.scrollTop += dy; }
+        const a = cp ? [cp.cam.x, cp.cam.y] : [this.scroll.scrollLeft, this.scroll.scrollTop];
+        if (b[0] !== a[0] || b[1] !== a[1]) {
           const pv = this.activePv, tl = this.tools[this._tool()];
           tl.move?.(this._mk({ clientX: x, clientY: y, pressure: 0.5, pointerType: 'mouse', timeStamp: performance.now() }, pv));
         }

@@ -5,7 +5,7 @@ import { drawStroke } from './stroke.js';
 import { syncItems, clearItems } from './items.js';
 import { getImage, cachedImage } from './assets.js';
 import { bboxOf } from './stroke.js';
-import { drawCanvasBg, flattenCanvas, CAM_MIN, CAM_MAX } from './canvasmode.js';
+import { drawCanvasBg, flattenCanvas, sheetPages, pageH, CAM_MIN, CAM_MAX } from './canvasmode.js';
 
 const CTX_OPTS = { desynchronized: true, alpha: true };
 const MAX_PX = 8e6;
@@ -32,10 +32,34 @@ export class PageView {
     this.vw = 0; this.vh = 0; this.dpr = 1;
   }
   get canvas() { return !!this.page.canvas; }
+  /** one continuous sheet that grows page by page (vs. an unbounded free canvas) */
+  get seamless() { return !!this.page.seamless; }
+  get free() { return this.canvas && !this.seamless; }
+  zoomRange() {
+    if (!this.seamless) return [CAM_MIN, CAM_MAX];
+    const fit = Math.min(1, (this.vw || 400) / this.page.width);
+    return [Math.max(0.2, fit * 0.55), 4];
+  }
+  /** keep a seamless sheet in view: centred when narrow, never scrolled far past its ends */
+  constrain() {
+    if (!this.seamless) return;
+    const c = this.cam, W = this.page.width, Hs = this.page.height, [lo, hi] = this.zoomRange();
+    c.z = Math.min(hi, Math.max(lo, c.z));
+    const vwW = this.vw / c.z, vhW = this.vh / c.z;
+    c.x = W <= vwW - 16 / c.z ? W / 2 - vwW / 2 : Math.min(W + 24 / c.z - vwW, Math.max(-24 / c.z, c.x));
+    const top = -86 / c.z; c.y = Math.min(Math.max(top, Hs + 130 / c.z - vhW), Math.max(top, c.y));
+  }
+  /** resize the sheet to its content (auto page breaks); true when the page count changed */
+  fitSheet() {
+    if (!this.seamless) return false;
+    const h = sheetPages(this.page) * pageH(this.page);
+    if (h === this.page.height) return false;
+    this.page.height = h; return true;
+  }
   /** camera of a free canvas page: world point at the top-left corner + zoom */
   get cam() { return this.page.cam || (this.page.cam = { x: 0, y: 0, z: 1 }); }
-  get w() { return this.canvas ? this.vw / this.cam.z : this.page.width; }
-  get h() { return this.canvas ? this.vh / this.cam.z : this.page.height; }
+  get w() { return this.free ? this.vw / this.cam.z : this.page.width; }
+  get h() { return this.free ? this.vh / this.cam.z : this.page.height; }
   /** page units -> offset inside the page element, in css px */
   sx(x) { return this.canvas ? (x - this.cam.x) * this.cam.z : x * this.zoom; }
   sy(y) { return this.canvas ? (y - this.cam.y) * this.cam.z : y * this.zoom; }
@@ -48,7 +72,8 @@ export class PageView {
     if (this.canvas) {
       const sc = this.engine.scroll, cam = this.cam;
       this.vw = sc.clientWidth; this.vh = sc.clientHeight;
-      cam.z = this.zoom = Math.min(CAM_MAX, Math.max(CAM_MIN, zoom));
+      const [lo, hi] = this.zoomRange();
+      cam.z = this.zoom = Math.min(hi, Math.max(lo, zoom)); this.constrain();
       this.el.style.width = this.vw + 'px'; this.el.style.height = this.vh + 'px';
       this.items.style.width = this.items.style.height = '0px';
       this.items.style.transform = `translate(${-cam.x * cam.z}px,${-cam.y * cam.z}px) scale(${cam.z})`;
@@ -62,7 +87,7 @@ export class PageView {
   /** camera moved: shift the items layer now, repaint canvases next frame */
   redraw() {
     if (!this.canvas) return;
-    const cam = this.cam;
+    this.constrain(); const cam = this.cam;
     this.items.style.transform = `translate(${-cam.x * cam.z}px,${-cam.y * cam.z}px) scale(${cam.z})`;
     if (this._raf || !this.visible) return;
     this._raf = requestAnimationFrame(() => { this._raf = 0; if (!this.visible) return; this.renderBg(); this.size('live'); this.renderInk(); });
@@ -116,6 +141,7 @@ export class PageView {
   async renderBg() {
     const note = this.engine.note, pg = this.page, tk = this.token;
     const ctx = this.size('bg');
+    if (this.seamless) { this.renderSheet(ctx); return; }
     if (this.canvas) {
       const c = this.cam; drawCanvasBg(ctx, { x: c.x, y: c.y, w: this.vw / c.z, h: this.vh / c.z, z: c.z, paper: paperOf(note, pg), tpl: pg.bg || 'dot' });
       return;
@@ -126,6 +152,29 @@ export class PageView {
       const img = cachedImage(pg.bgImage.assetId) || await getImage(pg.bgImage.assetId);
       if (img && tk === this.token) { drawTemplate(ctx, this.w, this.h, 'blank', paperOf(note, pg)); drawBgImage(ctx, img, this.w, this.h, pg.bgImage.fit); }
     }
+  }
+  /** paint the visible pages of a seamless sheet edge to edge, with a hairline break between pages */
+  renderSheet(ctx) {
+    const note = this.engine.note, pg = this.page, c = this.cam, W = pg.width, H = pageH(pg), n = Math.round(pg.height / H);
+    const bc = this.cv.bg; ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, bc.width, bc.height); ctx.restore();
+    const k0 = Math.max(0, Math.floor(c.y / H)), k1 = Math.min(n - 1, Math.floor((c.y + this.vh / c.z) / H));
+    const paper = paperOf(note, pg), tpl = pg.bg || note.template || 'lined';
+    ctx.save(); ctx.shadowColor = 'rgba(20,24,40,.22)'; ctx.shadowBlur = 26 * this.dpr; ctx.shadowOffsetY = 6 * this.dpr;
+    ctx.fillStyle = Array.isArray(paper) ? paper[0] : paper && paper !== 'none' ? paper : '#fff'; ctx.fillRect(0, 0, W, pg.height); ctx.restore();
+    for (let k = k0; k <= k1; k++) {
+      ctx.save(); ctx.translate(0, k * H); ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
+      drawTemplate(ctx, W, H, tpl, paper, pg.bg ? null : note.preset, patternOf(note, pg)); ctx.restore();
+    }
+    // page break guides: dashed hairline across the sheet and a small page number in the margin
+    const px = 1 / c.z; ctx.save(); ctx.lineWidth = px; ctx.strokeStyle = 'rgba(79,70,229,.45)'; ctx.setLineDash([6 * px, 5 * px]);
+    ctx.fillStyle = 'rgba(100,106,130,.9)'; ctx.font = `600 ${11 * px}px system-ui, sans-serif`; ctx.textBaseline = 'middle';
+    for (let k = Math.max(1, k0); k <= Math.min(n - 1, k1 + 1); k++) {
+      ctx.beginPath(); ctx.moveTo(0, k * H); ctx.lineTo(W, k * H); ctx.stroke();
+      const label = 'Page ' + (k + 1), tw = ctx.measureText(label).width;
+      if (c.x < -tw - 14 * px) { ctx.setLineDash([]); ctx.textAlign = 'right'; ctx.fillText(label, -8 * px, k * H); ctx.setLineDash([6 * px, 5 * px]); }
+      else { ctx.textAlign = 'right'; ctx.fillText(label, W - 8 * px, k * H - 9 * px); }
+    }
+    ctx.restore();
   }
   async renderPdf() {
     const pg = this.page, c = this.cv.pdf, tk = this.token;

@@ -5,6 +5,7 @@ import { ibtn, popover } from './ui.js';
 import { paintPage } from './pages.js';
 import { paintTextPreview } from './preview.js';
 import { TEMPLATES, PAPER_COLORS } from './templates.js';
+import { slicePage } from './canvasmode.js';
 
 export function pageMenu(anchor, engine, i) {
   const note = engine.note, pg = note.pages[i];
@@ -37,17 +38,17 @@ export function pageMenu(anchor, engine, i) {
   const patRow = h('div', { class: 'ik-colors', style: { padding: '4px 10px' } }, patC, patO);
   const item = (ic, label, fn, danger) => h('button', { type: 'button', class: 'ik-menu-item' + (danger ? ' danger' : ''), onclick: done(fn) }, icon(ic, 18), h('span', {}, label));
   const box = h('div', { class: 'ik-menu ik-pagemenu' },
-    h('div', { class: 'ik-menu-title' }, `Page ${i + 1} template`), tplRow, allCb,
+    h('div', { class: 'ik-menu-title' }, pg.seamless ? 'Sheet template' : `Page ${i + 1} template`), tplRow, allCb,
     h('div', { class: 'ik-menu-title' }, 'Paper color'), paper, h('div', { class: 'ik-menu-title' }, 'Gradient'), grads, h('div', { class: 'ik-menu-title' }, 'Pattern color / opacity'), patRow, h('div', { class: 'ik-sep' }),
-    item('plus', 'Add page after', () => engine.addPage(i)),
-    item('copy', 'Duplicate page', () => engine.duplicatePage(i)),
-    i > 0 ? item('up', 'Move up', () => engine.movePage(i, i - 1)) : null,
-    i < note.pages.length - 1 ? item('down', 'Move down', () => engine.movePage(i, i + 1)) : null,
+    pg.seamless ? null : item('plus', 'Add page after', () => engine.addPage(i)),
+    pg.seamless ? null : item('copy', 'Duplicate page', () => engine.duplicatePage(i)),
+    !pg.seamless && i > 0 ? item('up', 'Move up', () => engine.movePage(i, i - 1)) : null,
+    !pg.seamless && i < note.pages.length - 1 ? item('down', 'Move down', () => engine.movePage(i, i + 1)) : null,
     pg.type === 'draw' ? h('button', { type: 'button', class: 'ik-menu-item', onclick: () => file.click() }, icon('image', 18), h('span', {}, pg.bgImage ? 'Replace background image' : 'Background image...')) : null,
     pg.bgImage ? h('div', { class: 'ik-seg inl' }, ...['contain', 'cover', 'stretch'].map((f) => h('button', { type: 'button', class: 'ik-segb' + (pg.bgImage.fit === f ? ' on' : ''), onclick: done(() => engine.setBgFit(i, f)) }, f))) : null,
     pg.bgImage ? item('x', 'Remove background image', () => engine.setBgImage(i, null)) : null,
     item('file', 'Page title / bookmark...', () => { const t = prompt('Page title (leave empty to clear)', pg.title || ''); if (t != null) engine.setPageStyle(i, { title: t || null, bookmark: t ? true : null }); }),
-    item('trash', 'Delete page', () => engine.deletePage(i), true), file);
+    pg.seamless ? null : item('trash', 'Delete page', () => engine.deletePage(i), true), file);
   pop = popover(anchor, box, { align: 'end', cls: 'wide' });
 }
 
@@ -58,10 +59,13 @@ export function mountSidebar(host, engine) {
   host.append(list, add);
   const items = [];
   let timer;
+  const seamless = () => !!engine.camPv()?.seamless;
   const io = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) draw(e.target._i); }, { root: list, rootMargin: '200px' });
   function draw(i) {
     const it = items[i]; if (!it) return;
-    const pg = engine.note.pages[i], pv = engine.pvs[i]; if (!pg || !pv) return;
+    const seam = engine.camPv()?.seamless, src = seam ? engine.note.pages[0] : engine.note.pages[i], pv = seam ? engine.pvs[0] : engine.pvs[i];
+    if (!src || !pv) return;
+    const pg = seam ? slicePage(src, i) : src;
     const W = 120, k = W / pg.width, dpr = Math.min(2, window.devicePixelRatio || 1), c = it.cv;
     c.width = Math.round(W * dpr); c.height = Math.round(pg.height * k * dpr);
     c.style.aspectRatio = pg.width + '/' + pg.height;
@@ -72,10 +76,13 @@ export function mountSidebar(host, engine) {
   }
   function build() {
     io.disconnect(); list.replaceChildren(); items.length = 0;
-    engine.note.pages.forEach((pg, i) => {
+    add.hidden = seamless();
+    const seam = seamless(), count = seam ? engine.pageCount() : engine.note.pages.length;
+    Array.from({ length: count }).forEach((_, i) => {
       const cv = h('canvas', { class: 'ik-thumb-cv' });
-      const more = ibtn('more', 'Page options', (e, b) => { e.stopPropagation(); pageMenu(b, engine, i); }, 'sm more');
+      const more = ibtn('more', seam ? 'Sheet options' : 'Page options', (e, b) => { e.stopPropagation(); pageMenu(b, engine, seam ? 0 : i); }, 'sm more');
       const el = h('div', { class: 'ik-thumb', draggable: 'true', tabindex: 0, role: 'button', 'aria-label': 'Go to page ' + (i + 1), onclick: () => engine.goToPage(i), onkeydown: (e) => { if (e.key === 'Enter') engine.goToPage(i); } }, cv, h('span', { class: 'num' }, String(i + 1)), more);
+      if (seam) el.draggable = false;
       el.addEventListener('dragstart', (e) => { e.dataTransfer.setData('text/x-ik-page', String(i)); e.dataTransfer.effectAllowed = 'move'; });
       el.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('text/x-ik-page')) { e.preventDefault(); el.classList.add('over'); } });
       el.addEventListener('dragleave', () => el.classList.remove('over'));
@@ -90,11 +97,12 @@ export function mountSidebar(host, engine) {
   }
   const offs = [
     engine.on('pages', build),
+    engine.on('sheet', () => { if (seamless() && engine.pageCount() !== items.length) build(); }),
     engine.on('page', mark),
     engine.on('change', (d) => {
       if (d.kind === 'pages') return;
       clearTimeout(timer);
-      timer = setTimeout(() => { const i = d.page ? engine.note.pages.indexOf(d.page) : -1; if (i >= 0) draw(i); else items.forEach((_, j) => draw(j)); }, d.kind === 'text' ? 250 : 450);
+      timer = setTimeout(() => { const i = d.page && !seamless() ? engine.note.pages.indexOf(d.page) : -1; if (i >= 0) draw(i); else items.forEach((_, j) => draw(j)); }, d.kind === 'text' ? 250 : 450);
     }),
   ];
   build();

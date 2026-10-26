@@ -310,3 +310,66 @@
 .ik-phone .ik-mmbox { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); left: 10px; }
 .ik-phone .ik-mm-cv { width: 132px; height: 90px; }
 .ik-phone .ik-backhome { bottom: calc(142px + env(safe-area-inset-bottom, 0px)); }
+
+/* ---------- colour tray ---------- */
+.ik-options { gap: 10px 16px; padding: 12px 14px; border-radius: 22px; align-items: flex-start; box-shadow: var(--ik-shadow), inset 0 1px 0 color-mix(in srgb, #fff 55%, transparent); }
+.ik-colors.tray { flex-direction: column; align-items: stretch; gap: 10px; flex-wrap: nowrap; }
+.ik-grid { display: grid; grid-template-columns: repeat(10, 26px); gap: 7px; padding: 8px; border-radius: 16px; background: color-mix(in srgb, var(--ik-text) 5%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ik-text) 7%, transparent); }
+.ik-grid.hl { grid-template-columns: repeat(8, 26px); }
+.ik-grid .ik-sw { width: 26px; height: 26px; border: 0; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .14), 0 1px 2px rgba(0, 0, 0, .12); position: relative; }
+.ik-grid .ik-sw:hover { transform: scale(1.14); z-index: 1; }
+.ik-grid .ik-sw.on { transform: scale(1.04); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .14), 0 0 0 2px var(--ik-surface), 0 0 0 4px var(--ik-accent); z-index: 2; }
+.ik-grid .ik-sw.on::after { content: ''; position: absolute; inset: 0; margin: auto; width: 7px; height: 7px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, .35); }
+.ik-extra { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.ik-extra .ik-custom { width: 30px; height: 30px; box-shadow: 0 0 0 2px var(--ik-surface), 0 0 0 3px var(--ik-border); }
+.ik-hex { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 5px; border-radius: 999px; background: color-mix(in srgb, var(--ik-text) 6%, transparent); font: 600 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--ik-muted); letter-spacing: .02em; }
+.ik-hex i { width: 18px; height: 18px; border-radius: 50%; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .18); }
+.ik-extra .ik-sw.recent { width: 22px; height: 22px; border: 0; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .16); }
+.ik-extra .ik-sw.on { box-shadow: 0 0 0 2px var(--ik-surface), 0 0 0 4px var(--ik-accent); }
+.ik-size { padding: 6px 4px; }
+.ik-range { height: 30px; }
+@media (pointer: coarse) {
+  .ik-grid { grid-template-columns: repeat(10, 32px); gap: 8px; } .ik-grid.hl { grid-template-columns: repeat(8, 32px); }
+  .ik-grid .ik-sw { width: 32px; height: 32px; } .ik-extra .ik-custom { width: 36px; height: 36px; } .ik-extra .ik-sw.recent { width: 30px; height: 30px; }
+}
+.ik-phone .ik-options { padding: 12px; align-items: stretch; }
+.ik-phone .ik-colors.tray { align-items: center; }
+.ik-phone .ik-grid { grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 6px; width: 100%; box-sizing: border-box; }
+.ik-phone .ik-grid.hl { grid-template-columns: repeat(8, minmax(0, 1fr)); }
+.ik-phone .ik-grid .ik-sw { width: 100%; height: auto; aspect-ratio: 1; }
+.ik-phone .ik-extra { width: 100%; }
+
+/* ---------- iPad & phone ---------- */
+.ik-header { height: calc(54px + env(safe-area-inset-top, 0px)); padding-top: env(safe-area-inset-top, 0px); padding-left: max(8px, env(safe-area-inset-left, 0px)); padding-right: max(8px, env(safe-area-inset-right, 0px)); }
+.ik-toolbar { top: calc(62px + env(safe-area-inset-top, 0px)); }
+.ik-options { top: calc(124px + env(safe-area-inset-top, 0px)); }
+.ik-fab.zoom { right: max(16px, env(safe-area-inset-right, 0px)); }
+.ik-mmbox { left: max(16px, env(safe-area-inset-left, 0px)); }
+.ik-page, .ik-scroll, .ik-toolbar { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
+.ik-tools { -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; scroll-snap-type: x proximity; }
+.ik-tools .ik-btn { scroll-snap-align: start; }
+@media (pointer: coarse) {
+  .ik-root input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="color"]), .ik-root select, .ik-root textarea { font-size: 16px; }
+  .ik-segb { min-height: 40px; padding: 8px 12px; }
+  .ik-menu-item { min-height: 46px; }
+  .ik-fab .ik-btn { min-width: 44px; height: 44px; }
+  .ik-range { height: 36px; }
+  .ik-thumb .more { min-width: 36px; height: 36px; }
+  .ik-handle { width: 26px; height: 26px; margin: -13px; }
+}
+/* iPad and small laptops: keep the header calm, secondary actions live in the More menu */
+@media (pointer: coarse) and (max-width: 1100px) { .notablet { display: none !important; } .ik-title { min-width: 0; } }
+@media (pointer: coarse) and (min-width: 720px) and (max-width: 1100px) {
+  .ik-toolbar { padding: 6px 8px; } .ik-options { max-width: calc(100% - 24px); }
+  .ik-fab.zoom { bottom: max(18px, env(safe-area-inset-bottom, 0px)); }
+}
+/* phones: popovers become bottom sheets, the toolbar scrolls sideways */
+.ik-phone .ik-pop { left: 8px !important; right: 8px; top: auto !important; bottom: calc(80px + env(safe-area-inset-bottom, 0px)); width: auto !important; max-width: none; max-height: 66%; border-radius: 22px; padding: 10px; animation: ik-rise .3s var(--ik-spring); }
+.ik-phone .ik-pop .ik-menu-item { min-height: 48px; }
+.ik-phone .ik-toolbar { padding: 6px 8px; } .ik-phone .ik-tools { padding-right: 4px; }
+.ik-phone .ik-header { gap: 2px; }
+.ik-phone .ik-fab.zoom .ik-btn.sm:not(.zp) { min-width: 40px; }
+@media (max-height: 480px) and (orientation: landscape) {
+  .ik-phone .ik-toolbar { left: auto; right: 8px; bottom: 8px; max-width: 70%; }
+  .ik-phone .ik-fab.pg, .ik-phone .ik-fab.zoom { bottom: 8px; }
+}

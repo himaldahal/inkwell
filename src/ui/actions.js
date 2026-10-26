@@ -21,7 +21,12 @@ export async function createNote(opts = {}) {
     text, textIndex: stripHtml(text), tags: opts.tags || [],
   });
   note.pages[0].bg = tpl;
-  if (opts.canvas) {
+  if (opts.layout === 'seamless') {
+    // one continuous sheet: page breaks are virtual, the sheet grows as the user writes
+    note.mode = 'seamless';
+    Object.assign(note.pages[0], { canvas: true, seamless: true, pageH: note.pages[0].height });
+  }
+  if (opts.canvas || opts.layout === 'canvas') {
     // free canvas: one unbounded page with a camera; the paper pattern is kept if it suits an open board
     note.mode = 'canvas';
     Object.assign(note.pages[0], { canvas: true, bg: ['dot', 'grid', 'lined', 'blank'].includes(tpl) ? tpl : 'dot' });

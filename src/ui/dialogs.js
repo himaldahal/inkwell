@@ -14,7 +14,7 @@ export const paperEl = (tpl, color, cls = '') => h('div', { class: `paper t-${tp
 export async function newNoteDialog({ notebookId = null, preset = null } = {}) {
   const s = getSettings();
   const nbs = await A.getNotebooks();
-  const st = { canvas: false, template: s.defaultTemplate || 'lined', paper: s.defaultPaper ?? null, title: '', preset: null, notebookId, text: undefined, tags: [] };
+  const st = { layout: 'paged', canvas: false, template: s.defaultTemplate || 'lined', paper: s.defaultPaper ?? null, title: '', preset: null, notebookId, text: undefined, tags: [] };
   const grid = h('div', { class: 'tpl-grid', role: 'radiogroup', 'aria-label': 'Template' });
   const gal = h('div', { class: 'tpl-gal' });
   const papers = h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': 'Paper color' });
@@ -33,8 +33,8 @@ export async function newNoteDialog({ notebookId = null, preset = null } = {}) {
   if (preset) { const p = PRESETS.find((x) => x.id === preset); if (p) { st.preset = p.id; st.template = p.base; st.text = p.text; titleIn.placeholder = p.title; } }
   const layoutSeg = h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Layout' });
   const paintLayout = () => {
-    layoutSeg.replaceChildren(...[[false, 'Pages', 'A4 pages, like paper'], [true, 'Free canvas', 'Endless board: pan, zoom, write anywhere']].map(([v, label, tip]) =>
-      h('button', { type: 'button', class: 'seg-b' + (st.canvas === v ? ' on' : ''), role: 'radio', 'aria-checked': String(st.canvas === v), title: tip, onclick: () => { st.canvas = v; if (v && !['dot', 'grid', 'lined', 'blank'].includes(st.template)) st.template = 'dot'; paintLayout(); paint(); } }, label)));
+    layoutSeg.replaceChildren(...[['paged', 'Page break', 'Separate A4 pages, like paper'], ['seamless', 'Seamless', 'One continuous sheet. Page breaks appear on their own'], ['canvas', 'Free canvas', 'Endless board: pan, zoom, write anywhere']].map(([v, label, tip]) =>
+      h('button', { type: 'button', class: 'seg-b' + (st.layout === v ? ' on' : ''), role: 'radio', 'aria-checked': String(st.layout === v), title: tip, onclick: () => { st.layout = v; st.canvas = v === 'canvas'; if (st.canvas && !['dot', 'grid', 'lined', 'blank'].includes(st.template)) st.template = 'dot'; paintLayout(); paint(); } }, label)));
   };
   paintLayout();
   paint();
@@ -50,7 +50,7 @@ export async function newNoteDialog({ notebookId = null, preset = null } = {}) {
     ],
     actions: [{ label: 'Cancel', kind: 'ghost' }, {
       label: 'Create note', kind: 'primary', onClick: async () => {
-        created = await A.createNote({ title: st.title.trim() || undefined, template: st.template, paperColor: st.paper, notebookId: st.notebookId, preset: st.canvas ? null : st.preset, canvas: st.canvas });
+        created = await A.createNote({ title: st.title.trim() || undefined, template: st.template, paperColor: st.paper, notebookId: st.notebookId, preset: st.canvas ? null : st.preset, canvas: st.canvas, layout: st.layout });
         if (!st.title.trim() && !st.preset) { created.title = ''; }
       },
     }],

@@ -9,8 +9,16 @@ import { BRUSHES, FONTS } from './brushes.js';
 import { SHAPES } from './shapes.js';
 import { openColorPicker } from './colorpicker.js';
 
-const PALETTE = ['#111827', '#4f46e5', '#dc2626', '#ea580c', '#ca8a04', '#16a34a', '#0891b2', '#9333ea', '#db2777', '#6b7280', '#ffffff'];
-const HL_PALETTE = ['#fde047', '#86efac', '#7dd3fc', '#f9a8d4', '#fdba74', '#c4b5fd', '#fca5a5'];
+// 10 columns x 3 tones: neutrals down the first column, then red, orange, amber, green, teal, cyan, blue, violet, pink
+const PALETTE = [
+  '#111827', '#dc2626', '#ea580c', '#f59e0b', '#16a34a', '#0d9488', '#0891b2', '#2563eb', '#7c3aed', '#db2777',
+  '#4b5563', '#991b1b', '#9a3412', '#b45309', '#166534', '#115e59', '#155e75', '#1e40af', '#5b21b6', '#9d174d',
+  '#ffffff', '#fca5a5', '#fdba74', '#fde68a', '#86efac', '#5eead4', '#67e8f9', '#93c5fd', '#c4b5fd', '#f9a8d4',
+];
+const HL_PALETTE = [
+  '#fde047', '#fdba74', '#fca5a5', '#f9a8d4', '#c4b5fd', '#93c5fd', '#67e8f9', '#86efac',
+  '#facc15', '#fb923c', '#f87171', '#f472b6', '#a78bfa', '#60a5fa', '#22d3ee', '#4ade80',
+];
 const RANGE = { pen: [0.5, 24, 0.5], highlighter: [6, 50, 1], pencil: [0.5, 12, 0.5], shape: [0.5, 20, 0.5], eraser: [4, 60, 1] };
 const EMOJI = '😀 😂 😍 🤔 😎 😴 👍 👎 👏 🙏 💡 ⭐ ✅ ❌ ❗ ❓ 🔥 💯 🎯 📌 📎 📝 📚 🧠 ❤️ 💙 🟡 🟢 🔴 ➡️ ⬆️ ⚠️ 🎉 ☕ 🕐 📅 🔍 💬 🚀'.split(' ');
 
@@ -52,7 +60,8 @@ export function buildToolbar(engine, act) {
     drawStroke(ctx, { id: 'prev', brush: tool === 'pen' ? c.brush : undefined, tool: tool === 'shape' ? 'pen' : tool, color: c.color, size: Math.min(c.size, 36), pts, shape: tool === 'shape' });
   }
   function colorRow(tool, c) {
-    const row = h('div', { class: 'ik-colors', role: 'radiogroup', 'aria-label': 'Color' });
+    const row = h('div', { class: 'ik-colors tray', role: 'radiogroup', 'aria-label': 'Color' });
+    const grid = h('div', { class: 'ik-grid' + (tool === 'highlighter' ? ' hl' : '') });
     const set = (col) => { if (engine.editing) act.textColor(col); engine.set(tool, { color: col }); };
     const list = tool === 'highlighter' ? HL_PALETTE : PALETTE;
     const mkSw = (col, cls = '') => {
@@ -60,16 +69,19 @@ export function buildToolbar(engine, act) {
       b.addEventListener('mousedown', (e) => e.preventDefault());
       b.addEventListener('click', () => set(col)); return b;
     };
-    list.forEach((col) => row.append(mkSw(col)));
+    list.forEach((col) => grid.append(mkSw(col)));
+    row.append(grid);
+    const extra = h('div', { class: 'ik-extra' });
     const custom = h('button', { type: 'button', class: 'ik-custom', title: 'Color picker (HSB / HEX / opacity)', 'aria-label': 'Custom color' });
     custom.addEventListener('mousedown', (e) => e.preventDefault());
     custom.addEventListener('click', () => openColorPicker(custom, { color: /^#[0-9a-f]{6}$/i.test(c.color) ? c.color : '#000000', alpha: c.alpha ?? 1, withAlpha: tool !== 'text',
       onChange: (hex, a) => { if (engine.editing) act.textColor(hex); engine.settings[tool].color = hex; if (tool !== 'text') engine.settings[tool].alpha = a; engine.saveSettings(); swatchNow.style.background = hex; } }));
-    row.append(custom);
+    extra.append(custom, h('span', { class: 'ik-hex', title: 'Current color' }, h('i', { style: { background: c.color } }), c.color.replace('#', '').toUpperCase().slice(0, 6)));
     const favs = pref.get('favcolors', []);
-    if (favs.length) { row.append(h('span', { class: 'ik-vsep' })); favs.slice(0, 6).forEach((col) => row.append(mkSw(col, 'recent'))); }
-    const rec = engine.recent.filter((x) => !list.includes(x)).slice(0, 5);
-    if (rec.length) { row.append(h('span', { class: 'ik-vsep' })); rec.forEach((col) => row.append(mkSw(col, 'recent'))); }
+    if (favs.length) { extra.append(h('span', { class: 'ik-vsep' })); favs.slice(0, 6).forEach((col) => extra.append(mkSw(col, 'recent'))); }
+    const rec = engine.recent.filter((x) => !list.includes(x)).slice(0, 6);
+    if (rec.length) { extra.append(h('span', { class: 'ik-vsep' })); rec.forEach((col) => extra.append(mkSw(col, 'recent'))); }
+    row.append(extra);
     return row;
   }
   function sizeRow(tool, c) {

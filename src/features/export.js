@@ -4,7 +4,7 @@ import { toast } from '../core/store.js';
 import { renderPdfPage } from './pdf.js';
 import { textToHtml } from './convert.js';
 import { makeZip } from './zip.js';
-import { flattenCanvas } from '../editor/canvasmode.js';
+import { flattenCanvas, expandPages } from '../editor/canvasmode.js';
 
 // PDF is the only export format. Importing files INTO notes is still supported.
 export { importFiles } from './import.js';
@@ -522,7 +522,7 @@ export async function buildNotePdf(note, opts = {}) {
   const L = { rgb, BlendMode };
   const scale = opts.scale || 2;
   const srcDocs = new Map();
-  const pages = (note.pages || []).map(flattenCanvas);
+  const pages = expandPages(note.pages);
   const hasText = opts.includeText !== false && note.text && textBlocks(note.text).length;
   const total = pages.length + (hasText ? 1 : 0);
   let n = 0;

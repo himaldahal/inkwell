@@ -3,6 +3,10 @@ import { bboxOf } from './stroke.js';
 
 export const CAM_MIN = 0.05, CAM_MAX = 8;
 export const isCanvasNote = (note) => note?.mode === 'canvas';
+export const isSeamlessNote = (note) => note?.mode === 'seamless';
+/** notes drawn through the camera renderer: free canvas and seamless sheets */
+export const isCamNote = (note) => note?.mode === 'canvas' || note?.mode === 'seamless';
+export const pageH = (pg) => pg.pageH || 1160;
 
 /** union of every live stroke and item, or null when the board is empty */
 export function contentBounds(page) {
@@ -20,9 +24,38 @@ export function contentBounds(page) {
   return x0 === Infinity ? null : { x0, y0, x1, y1 };
 }
 
+/** seamless sheet: how many page-heights the sheet needs (content plus a blank run-off, so the next page is always ready) */
+export function sheetPages(page) {
+  const H = pageH(page), b = contentBounds(page);
+  return Math.max(1, Math.ceil(((b ? b.y1 : 0) + H * 0.3) / H));
+}
+/** virtual page i of a seamless sheet as a plain page (strokes crossing a break appear on both pages, clipped) */
+export function slicePage(page, i) {
+  const H = pageH(page), y0 = i * H, y1 = y0 + H;
+  const strokes = [], items = [];
+  for (const s of page.strokes || []) {
+    if (s.deleted || !s.pts?.length) continue;
+    const b = bboxOf(s); if (b.y1 < y0 || b.y0 > y1) continue;
+    const pts = s.pts.slice(); for (let k = 1; k < pts.length; k += 3) pts[k] -= y0;
+    strokes.push({ ...s, pts });
+  }
+  for (const it of page.items || []) { if (!it.deleted && it.y < y1 && it.y + (it.h || 40) > y0) items.push({ ...it, y: it.y - y0 }); }
+  return { ...page, canvas: false, seamless: false, id: page.id + '#' + i, width: page.width, height: H, strokes, items, cam: undefined };
+}
+/** pages as they are printed / exported: seamless sheets split at their page breaks, free canvases framed around the content */
+export function expandPages(pages) {
+  const out = [];
+  for (const p of pages || []) {
+    if (p?.seamless) { const b = contentBounds(p), n = Math.max(1, Math.ceil((b ? b.y1 : 0) / pageH(p))); for (let i = 0; i < n; i++) out.push(slicePage(p, i)); }
+    else out.push(flattenCanvas(p));
+  }
+  return out;
+}
+
 /** a plain, origin-anchored copy of a canvas page, used by thumbnails, previews and PDF export */
 export function flattenCanvas(page) {
   if (!page?.canvas) return page;
+  if (page.seamless) return slicePage(page, 0);
   const pad = 64, b = contentBounds(page) || { x0: 0, y0: 0, x1: 1000, y1: 700 };
   const ox = b.x0 - pad, oy = b.y0 - pad;
   const width = Math.max(480, Math.ceil(b.x1 - b.x0 + pad * 2)), height = Math.max(360, Math.ceil(b.y1 - b.y0 + pad * 2));

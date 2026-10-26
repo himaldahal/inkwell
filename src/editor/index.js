@@ -5,6 +5,7 @@ import { getRecord, putRecord, softDelete, listNotes } from '../core/db.js';
 import { on as busOn, toast } from '../core/store.js';
 import { Engine, MIN_ZOOM, MAX_ZOOM } from './engine.js';
 import { isCanvasNote } from './canvasmode.js';
+import { toSeamless, toPaged } from './layout.js';
 import { createMinimap } from './minimap.js';
 import { buildToolbar } from './toolbar.js';
 import { mountSidebar, pageMenu } from './sidebar.js';
@@ -176,10 +177,10 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
     title.addEventListener('input', () => { note.title = title.value; dirty = true; save(); });
     title.addEventListener('keydown', (e) => { if (e.key === 'Enter') title.blur(); });
     const back = ibtn('back', 'Back', async () => { await flush(); onClose?.(); }, 'back');
-    const favBtn = ibtn('star', 'Favorite', () => { note.favorite = !note.favorite; dirty = true; save(); paintFlags(); }, 'nophone');
-    const pinBtn = ibtn('pin', 'Pin', () => { note.pinned = !note.pinned; dirty = true; save(); paintFlags(); }, 'nophone');
-    const tagBtn = ibtn('tag', 'Tags', (e, b) => tagsPop(b), 'nophone');
-    const recBtn = ibtn('mic', 'Record audio', (e, b) => recClick(b), 'nophone');
+    const favBtn = ibtn('star', 'Favorite', () => { note.favorite = !note.favorite; dirty = true; save(); paintFlags(); }, 'nophone notablet');
+    const pinBtn = ibtn('pin', 'Pin', () => { note.pinned = !note.pinned; dirty = true; save(); paintFlags(); }, 'nophone notablet');
+    const tagBtn = ibtn('tag', 'Tags', (e, b) => tagsPop(b), 'nophone notablet');
+    const recBtn = ibtn('mic', 'Record audio', (e, b) => recClick(b), 'nophone notablet');
     const expBtn = ibtn('file', 'Export as PDF', () => exportMenu(), 'nophone');
     const shareBtn = ibtn('users', 'Share with people', () => (optional.share?.() || Promise.reject()).then((m) => m.openShareDialog(note.id)).catch(() => toast('Sharing is not available')), 'nophone noro');
     const avatars = h('div', { class: 'ik-avatars', 'aria-label': 'People in this note' });
@@ -191,7 +192,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
     setAvatars(lastPeers); avatars.setAttribute('role', 'button'); avatars.tabIndex = 0;
     avatars.addEventListener('click', () => livePop(avatars));
     const pill = h('span', { class: 'ik-pill', hidden: !readOnly }, 'View only');
-    const searchBtn = ibtn('search', 'Search typed notes', () => { setView(wide() ? 'split' : 'text'); setTimeout(() => textLayer.toggleFind(), 50); }, 'nophone');
+    const searchBtn = ibtn('search', 'Search typed notes', () => { setView(wide() ? 'split' : 'text'); setTimeout(() => textLayer.toggleFind(), 50); }, 'nophone notablet');
     const sideBtn = ibtn('sidebar', 'Pages panel', () => toggleSide(), 'nophone');
     const moreBtn = ibtn('more', 'More', (e, b) => moreMenu(b), 'more');
     const paintFlags = () => { favBtn.classList.toggle('on', !!note.favorite); pinBtn.classList.toggle('on', !!note.pinned); tagBtn.classList.toggle('badge', note.tags.length > 0); };
@@ -217,8 +218,16 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       pageBtn.textContent = `${index + 1} / ${count}`;
       try { const rec = engine.audioMod?.getActiveRecorder(note.id); rec?.addMarker?.(id); } catch { /* ignore */ }
     });
+    /** page breaks <-> one continuous sheet; ink is carried over, the page cuts are recomputed */
+    function switchLayout() {
+      const seam = note.mode === 'seamless';
+      if (!confirm(seam ? 'Cut this sheet into separate pages at the page breaks?' : 'Join all pages into one continuous sheet? Page breaks will appear automatically in the pages panel and in PDF export.')) return;
+      if (seam) engine.replacePages(toPaged(note.pages[0]), { mode: undefined });
+      else { const pages = toSeamless(note); if (!pages) { toast('Notes with imported PDF pages cannot be made seamless'); return; } engine.replacePages(pages, { mode: 'seamless' }); }
+      dirty = true; save(); toast(seam ? 'Now using page breaks' : 'Now seamless');
+    }
     function jumpPop(anchor) {
-      const inp = h('input', { type: 'number', min: 1, max: note.pages.length, value: engine.cur + 1, class: 'ik-jump', 'aria-label': 'Page number' });
+      const inp = h('input', { type: 'number', min: 1, max: engine.pageCount(), value: engine.cur + 1, class: 'ik-jump', 'aria-label': 'Page number' });
       const go = () => { engine.goToPage((+inp.value || 1) - 1); pop.close(); };
       inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
       const pop = popover(anchor, h('div', { class: 'ik-jumpbox' }, h('span', {}, 'Go to page'), inp, h('button', { type: 'button', class: 'ik-primary', onclick: go }, 'Go')), {});
@@ -384,8 +393,9 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
         { label: 'Tags...', icon: 'tag', run: () => setTimeout(() => tagsPop(anchor), 0) },
         { label: 'Note info', icon: 'info', run: () => setTimeout(() => infoPop(anchor), 0) },
         '-',
-        { label: 'Page template / paper...', icon: 'bg', run: () => setTimeout(() => pageMenu(anchor, engine, engine.cur), 0) },
+        { label: 'Page template / paper...', icon: 'bg', run: () => setTimeout(() => pageMenu(anchor, engine, engine.camPv() ? 0 : engine.cur), 0) },
         { label: 'Pages panel', icon: 'sidebar', run: () => toggleSide() },
+        ...(note.mode !== 'canvas' ? [{ label: note.mode === 'seamless' ? 'Layout: switch to page breaks' : 'Layout: switch to seamless scrolling', icon: 'layout', run: () => switchLayout() }] : []),
         ...(enabled('toc') ? [{ label: 'Outline & contents', icon: 'list', run: () => setTimeout(() => outlinePop(anchor), 0) }] : []),
         ...(enabled('embeds') ? [{ label: 'Embed a link (video, doc, map...)', icon: 'link', run: () => embedPrompt() }] : []),
         ...(enabled('excalidraw') ? [{ label: 'New infinite canvas page', icon: 'layout', run: () => engine.addInfinitePage() }, { label: engine.grid ? 'Snap to grid: on' : 'Snap to grid: off', icon: 'bg', run: () => { engine.grid = !engine.grid; pref.set('grid', engine.grid); toast('Grid snap ' + (engine.grid ? 'on' : 'off')); } }] : []),
@@ -578,7 +588,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       if (txt && txt.trim()) {
         e.preventDefault(); const pv = engine.currentPv(), c = engine.visibleCenter(pv);
         const esc = (s) => s.replace(/[&<>]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m]));
-        engine.insertTextBox(pv, pv.canvas ? c.x - 140 : Math.max(0, c.x - 140), pv.canvas ? c.y - 30 : Math.max(0, c.y - 30), esc(txt).replace(/\n/g, '<br>'), txt);
+        engine.insertTextBox(pv, pv.free ? c.x - 140 : Math.max(0, c.x - 140), pv.free ? c.y - 30 : Math.max(0, c.y - 30), esc(txt).replace(/\n/g, '<br>'), txt);
       }
     };
     document.addEventListener('keydown', onKey); document.addEventListener('copy', onCopy); document.addEventListener('cut', onCut); document.addEventListener('paste', onPaste);
