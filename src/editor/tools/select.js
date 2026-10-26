@@ -8,7 +8,7 @@ import { fixBindings, isConnector } from '../connectors.js';
 import { CLOSED } from '../shapes.js';
 import { pref } from '../ui.js';
 
-export const clipboard = { data: null, n: 0 };
+export const clipboard = { data: null, n: 0, id: null };
 
 export function createSelectTool(engine) {
   let extra = new Set(), mode = null, pv = null, start = null, before = null, orig = null, box0 = null, handle = '', moved = false, lasso = [], lassoFrom = null, tapStroke = null, lastTap = { id: null, t: 0 };

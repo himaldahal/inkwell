@@ -670,10 +670,10 @@ export class Engine {
   showRadial(cx, cy) {
     this.hideRadial();
     const r = this.wrap.getBoundingClientRect(), ring = h('div', { class: 'ik-radial', 'data-ik-ui': '', style: { left: cx - r.left + 'px', top: cy - r.top + 'px' } });
-    const list = ['pen', 'highlighter', 'eraser', 'select', 'text', 'shape', 'laser', 'hand'];
+    const list = ['pen', 'highlighter', 'eraser', 'select', 'text', 'shape', 'laser', 'hand', 'paste'];
     list.forEach((t, i) => {
       const a = (i / list.length) * 6.2832 - 1.5708, b = h('button', { type: 'button', title: t, 'aria-label': t, style: { left: Math.cos(a) * 78 + 'px', top: Math.sin(a) * 78 + 'px', animationDelay: i * 18 + 'ms' } });
-      b.append(icon(t, 22)); b.addEventListener('click', () => { this.setTool(t); this.hideRadial(); });
+      b.append(icon(t === 'paste' ? 'copy' : t, 22)); b.addEventListener('click', () => { this.hideRadial(); if (t === 'paste') this.onPasteRequest?.(); else this.setTool(t); });
       ring.append(b);
     });
     this.wrap.append(ring); this._radial = ring; this.buzz(10);
@@ -857,6 +857,7 @@ export class Engine {
     const pv = tg.closest?.('.ik-page') ? this.byEl.get(tg.closest('.ik-page')) : null;
     if (!pv) { return; }
     const tl = this.tools[this._tool()]; if (!tl?.down) return;
+    if (DRAW_TOOLS.includes(this._tool()) || this._tool() === 'eraser') this.root.classList.add('ik-inking');
     this._org(pv); this.activePv = pv; this.activeId = e.pointerId; this.mode = 'tool';
     try { this.scroll.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     e.preventDefault();
@@ -901,7 +902,7 @@ export class Engine {
     if (this.presCbs.size) this._hover(e);
   }
   _up(e, cancel) {
-    clearTimeout(this._lp); this.root.classList.remove('ik-drawing');
+    clearTimeout(this._lp); this.root.classList.remove('ik-drawing', 'ik-inking');
     if (e.pointerType === 'pen') this.penDown = false;
     if (e.pointerType === 'touch' && this.touches.has(e.pointerId)) {
       this.touches.delete(e.pointerId);

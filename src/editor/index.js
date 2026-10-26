@@ -93,25 +93,29 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
     };
     const makePreview = () => renderNotePreviewSync(note, { w: 360, pdfCanvas: engine.pvs[0]?.cv.pdf });
     let baseText = note.text || '', baseTitle = note.title || '';
-    const doSave = () => {
+    let lastInputAt = 0;
+    const doSave = (force) => {
       if (readOnly || !dirty) { dirty = false; return saving; }
+      // keep the main thread free while the user is writing; the save happens in the next pause
+      if (force !== true && (engine.mode === 'tool' || engine.mode === 'gesture' || performance.now() - lastInputAt < 700)) { save(); return saving; }
       if (!note.pages[0]?.strokes.length && (note.text || '') && !previewDirty) previewDirty = true;
       baseText = note.text || ''; baseTitle = note.title || '';
       dirty = false;
       try {
         note.textIndex = indexText();
-        if (previewDirty) { previewDirty = false; note.preview = makePreview() || note.preview; note.previewV = 2; }
+        if (previewDirty && (force === true || performance.now() - lastInputAt > 4000)) { previewDirty = false; note.preview = makePreview() || note.preview; note.previewV = 2; }
+        else if (previewDirty) setTimeout(() => save(), 4200);
       } catch (e) { console.error(e); }
       saving = putRecord('notes', note).catch((e) => { dirty = true; console.error('save failed', e); });
       return saving;
     };
-    const save = debounce(doSave, 600);
+    const save = debounce(doSave, 1200);
     if (!readOnly && note.previewV !== 2) { dirty = previewDirty = true; save(); } // refresh previews made by older versions once
-    const touch = (page) => { dirty = true; if (!page || page === note.pages[0]) previewDirty = true; save(); };
+    const touch = (page) => { lastInputAt = performance.now(); dirty = true; if (!page || page === note.pages[0]) previewDirty = true; save(); };
     const origTextChange = null; void origTextChange;
     engine.on('change', (d) => touch(d.page));
     cleanup.push(() => save.cancel());
-    const flush = () => { save.cancel(); return doSave(); };
+    const flush = () => { save.cancel(); return doSave(true); };
     const onHide = () => { if (document.visibilityState === 'hidden') flush(); };
     document.addEventListener('visibilitychange', onHide); window.addEventListener('pagehide', flush);
     cleanup.push(() => { document.removeEventListener('visibilitychange', onHide); window.removeEventListener('pagehide', flush); });
@@ -151,6 +155,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       tts: enabled('tts'), dictation: enabled('dictation'), goPage: (n) => engine.goToPage(n),
       transform: (a, root) => import('./transform.js').then((m) => m.textMenu(a, root, () => { note.text = root.innerHTML; dirty = true; save(); })),
       read: (a, root) => voiceRead(a, root),
+      pasteImage: (f) => { engine.insertImage(f); toast('Image added to the page'); },
       dictate: (b, root) => import('./voice.js').then((m) => m.toggleDictation(() => root, (on) => b.classList.toggle('rec', on))),
     };
     const textLayer = mountTextLayer(textHost, note, { hooks, onChange: () => {
@@ -405,6 +410,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
         { label: 'Note info', icon: 'info', run: () => setTimeout(() => infoPop(anchor), 0) },
         '-',
         { label: 'Page template / paper...', icon: 'bg', run: () => setTimeout(() => pageMenu(anchor, engine, engine.camPv() ? 0 : engine.cur), 0) },
+        { label: 'Paste (Ctrl+V)', icon: 'copy', run: () => engine.onPasteRequest?.() },
         { label: 'Apply a template to this page...', icon: 'layout', run: () => applyTemplate() },
         { label: 'Pen & touch settings...', icon: 'sliders', run: () => import('../ui/calibrate.js').then((m) => m.openPenSettings()) },
         { label: 'Pages panel', icon: 'sidebar', run: () => toggleSide() },
@@ -590,21 +596,43 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       else if (k === 'pageup') engine.goToPage(engine.cur - 1);
     };
     const inEditable = (e) => !!e.target.closest?.('input,textarea,select,[contenteditable="true"]');
-    const onCopy = (e) => { if (inEditable(e) || !engine.selection) return; if (sel().copy()) e.preventDefault(); };
-    const onCut = (e) => { if (inEditable(e) || !engine.selection) return; sel().cut(); e.preventDefault(); };
+    // copying a selection tags the system clipboard, so Ctrl+V can tell "my selection" from anything copied elsewhere later
+    const tagClip = (e) => { clipboard.id = String(Date.now()); try { e.clipboardData.setData('application/x-inkwell-clip', clipboard.id); } catch { /* ignore */ } };
+    const onCopy = (e) => { if (inEditable(e) || !engine.selection) return; if (sel().copy()) { tagClip(e); e.preventDefault(); } };
+    const onCut = (e) => { if (inEditable(e) || !engine.selection) return; sel().cut(); tagClip(e); e.preventDefault(); };
+    /** paste plain text: a video / map link becomes an embed, anything else a text box at the centre of the view */
+    const pasteText = (txt) => {
+      if (enabled('embeds') && /^https?:\/\/\S+$/.test(txt.trim())) { const info = parseEmbed(txt); if (info && info.kind !== 'link') { engine.insertEmbed(info); return; } }
+      const pv = engine.currentPv(), c = engine.visibleCenter(pv);
+      const esc = (s) => s.replace(/[&<>]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m]));
+      engine.insertTextBox(pv, pv.free ? c.x - 140 : Math.max(0, c.x - 140), pv.free ? c.y - 30 : Math.max(0, c.y - 30), esc(txt).replace(/\n/g, '<br>'), txt);
+    };
+    /** the paste button / menu entry: reads whatever is on the clipboard (image, text or the last selection) */
+    const pasteFromClipboard = async () => {
+      if (readOnly) return;
+      try {
+        for (const it of await navigator.clipboard.read()) {
+          const img = it.types.find((t) => t.startsWith('image/'));
+          if (img) { engine.insertImage(new File([await it.getType(img)], 'pasted', { type: img })); return; }
+          if (it.types.includes('text/plain')) { const t = await (await it.getType('text/plain')).text(); if (t.trim()) { pasteText(t); return; } }
+        }
+      } catch {
+        try { const t = await navigator.clipboard.readText(); if (t?.trim()) { pasteText(t); return; } } catch { /* permission denied or unsupported */ }
+      }
+      if (clipboard.data) sel().paste(); else toast('Nothing to paste. Copy something, then press Ctrl+V or allow clipboard access.');
+    };
+    engine.onPasteRequest = pasteFromClipboard;
     const onPaste = (e) => {
       if (readOnly) return;
       if (inEditable(e) || !root.isConnected || !root.offsetParent) return;
-      const files = [...(e.clipboardData?.files || [])].filter((f) => f.type.startsWith('image/'));
+      const cd = e.clipboardData, files = [...(cd?.files || [])].filter((f) => f.type.startsWith('image/'));
+      if (!files.length) for (const it of cd?.items || []) if (it.kind === 'file' && it.type.startsWith('image/')) { const f = it.getAsFile(); if (f) files.push(f); }
+      const txt = cd?.getData('text/plain') || '', mark = cd?.getData('application/x-inkwell-clip');
       if (files.length) { e.preventDefault(); files.forEach((f) => engine.insertImage(f)); return; }
-      if (clipboard.data) { e.preventDefault(); sel().paste(); return; }
-      const txt = e.clipboardData?.getData('text/plain');
-      if (txt && enabled('embeds') && /^https?:\/\/\S+$/.test(txt.trim())) { const info = parseEmbed(txt); if (info && info.kind !== 'link') { e.preventDefault(); engine.insertEmbed(info); return; } }
-      if (txt && txt.trim()) {
-        e.preventDefault(); const pv = engine.currentPv(), c = engine.visibleCenter(pv);
-        const esc = (s) => s.replace(/[&<>]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m]));
-        engine.insertTextBox(pv, pv.free ? c.x - 140 : Math.max(0, c.x - 140), pv.free ? c.y - 30 : Math.max(0, c.y - 30), esc(txt).replace(/\n/g, '<br>'), txt);
-      }
+      // the last thing copied wins: our own selection only when it is what the clipboard holds
+      if (clipboard.data && (mark ? mark === clipboard.id : !txt.trim())) { e.preventDefault(); sel().paste(); return; }
+      if (txt.trim()) { e.preventDefault(); pasteText(txt); return; }
+      if (clipboard.data) { e.preventDefault(); sel().paste(); }
     };
     document.addEventListener('keydown', onKey); document.addEventListener('copy', onCopy); document.addEventListener('cut', onCut); document.addEventListener('paste', onPaste);
     cleanup.push(() => { document.removeEventListener('keydown', onKey); document.removeEventListener('copy', onCopy); document.removeEventListener('cut', onCut); document.removeEventListener('paste', onPaste); });

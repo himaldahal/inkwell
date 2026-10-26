@@ -75,7 +75,7 @@ export function createMinimap(engine) {
   toggle.addEventListener('click', () => { collapsed = !collapsed; pref.set('minimap', collapsed); root.classList.toggle('off', collapsed); schedule(); });
   back.addEventListener('click', () => engine.fitContent());
   engine.on('cam', schedule);
-  engine.on('change', () => { version++; schedule(); });
+  let ct = 0; engine.on('change', () => { clearTimeout(ct); ct = setTimeout(() => { version++; schedule(); }, 500); });
   engine.on('history', () => { version++; schedule(); });
   engine.on('pages', () => { version++; schedule(); });
   setTimeout(schedule, 50);

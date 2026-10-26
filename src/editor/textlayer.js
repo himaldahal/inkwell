@@ -294,6 +294,8 @@ export function mountTextLayer(host, note, { onChange, hooks = {} }) {
   });
   ed.addEventListener('paste', (e) => {
     e.preventDefault();
+    const imgs = [...(e.clipboardData.files || [])].filter((f) => f.type.startsWith('image/'));
+    if (imgs.length && hooks.pasteImage) { imgs.forEach((f) => hooks.pasteImage(f)); return; }
     const t = e.clipboardData.getData('text/plain'); if (!t) return;
     const s = sel();
     if (/^https?:\/\/\S+$/.test(t.trim()) && s.rangeCount && !s.isCollapsed) { document.execCommand('createLink', false, t.trim()); sync(); return; }

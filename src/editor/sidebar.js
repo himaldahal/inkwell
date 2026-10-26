@@ -102,7 +102,7 @@ export function mountSidebar(host, engine) {
     engine.on('change', (d) => {
       if (d.kind === 'pages') return;
       clearTimeout(timer);
-      timer = setTimeout(() => { const i = d.page && !seamless() ? engine.note.pages.indexOf(d.page) : -1; if (i >= 0) draw(i); else items.forEach((_, j) => draw(j)); }, d.kind === 'text' ? 250 : 450);
+      timer = setTimeout(function run() { if (engine.mode === 'tool' || engine.mode === 'gesture') { timer = setTimeout(run, 600); return; } const i = d.page && !seamless() ? engine.note.pages.indexOf(d.page) : -1; if (i >= 0) draw(i); else items.forEach((_, j) => draw(j)); }, d.kind === 'text' ? 250 : 1100);
     }),
   ];
   build();

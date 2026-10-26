@@ -448,3 +448,10 @@
 .ik-optbtn, .ik-toolbar .optbtn { display: inline-flex; }
 .ik-toolbar .optbtn { margin-left: 2px; }
 .ik-opt-open .optbtn { background: color-mix(in srgb, var(--ik-accent) 16%, transparent); color: var(--ik-accent); }
+
+/* while the pen is down, frosted overlays stop blurring the canvas behind them (the blur is re-computed on every stroke frame) */
+.ik-inking .ik-toolbar, .ik-inking .ik-options, .ik-inking .ik-fab, .ik-inking .ik-header, .ik-inking .ik-mm, .ik-inking .ik-mm-t, .ik-inking .ik-selbar, .ik-inking .ik-side, .ik-inking .ik-backhome {
+  -webkit-backdrop-filter: none !important; backdrop-filter: none !important; transition: none !important; animation: none !important;
+}
+.ik-inking .ik-toolbar, .ik-inking .ik-options, .ik-inking .ik-fab, .ik-inking .ik-mm { background: var(--ik-surface) !important; }
+.ik-cv-live, .ik-cv-ink { contain: layout paint; }
