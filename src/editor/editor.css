@@ -289,3 +289,24 @@
 .ik-lib-i:hover { transform: scale(1.05); border-color: var(--ik-accent); } .ik-lib-w { position: relative; display: block; }
 .ik-lib-x { position: absolute; right: 2px; top: 2px; border: 0; background: transparent; color: var(--ik-muted); cursor: pointer; font-size: 16px; }
 .ik-toc-row.over { outline: 2px solid var(--ik-accent); }
+
+/* ---------- free canvas ---------- */
+.ik-pages.ik-canvasmode { padding: 0; gap: 0; width: 100%; min-width: 0; align-items: stretch; }
+.ik-scroll:has(.ik-canvasmode) { overflow: hidden; }
+.ik-page.ik-canvaspage { border-radius: 0; box-shadow: none; overflow: hidden; background: var(--ik-canvas); }
+.ik-root[data-tool="hand"] .ik-canvaspage, .ik-space .ik-canvaspage { cursor: grab; } .ik-panning .ik-canvaspage { cursor: grabbing; }
+.ik-fab.zoom.canvas { bottom: 16px; }
+.ik-mmwrap { position: absolute; inset: 0; z-index: 19; pointer-events: none; }
+.ik-mmbox { position: absolute; left: 16px; bottom: 16px; display: flex; align-items: flex-end; gap: 8px; pointer-events: auto; }
+.ik-mm { padding: 6px; border-radius: 16px; background: var(--ik-glass); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid var(--ik-border); box-shadow: var(--ik-shadow); transition: opacity .18s, transform .18s; transform-origin: left bottom; }
+.ik-mm-cv { display: block; width: 184px; height: 124px; border-radius: 11px; cursor: crosshair; touch-action: none; background: color-mix(in srgb, var(--ik-bg) 70%, transparent); }
+.ik-mm-t { order: -1; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 12px; border: 1px solid var(--ik-border); background: var(--ik-glass); backdrop-filter: blur(16px); color: var(--ik-muted); cursor: pointer; box-shadow: var(--ik-shadow); }
+.ik-mm-t:hover { color: var(--ik-text); }
+.ik-mmwrap.off .ik-mm { display: none; }
+.ik-mmbox { flex-direction: row; } .ik-mm-t { order: 1; }
+.ik-backhome { position: absolute; left: 50%; bottom: 74px; translate: -50% 0; pointer-events: auto; padding: 9px 16px; border-radius: 999px; border: 1px solid var(--ik-border); background: var(--ik-glass); backdrop-filter: blur(16px); color: var(--ik-text); font: 600 13px/1 inherit; cursor: pointer; box-shadow: var(--ik-shadow); animation: ikpop .22s ease-out; }
+.ik-backhome:hover { background: color-mix(in srgb, var(--ik-accent) 14%, var(--ik-glass)); }
+@keyframes ikpop { from { opacity: 0; transform: translateY(6px); } }
+.ik-phone .ik-mmbox { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); left: 10px; }
+.ik-phone .ik-mm-cv { width: 132px; height: 90px; }
+.ik-phone .ik-backhome { bottom: calc(142px + env(safe-area-inset-bottom, 0px)); }

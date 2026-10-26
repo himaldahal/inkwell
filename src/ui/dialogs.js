@@ -14,7 +14,7 @@ export const paperEl = (tpl, color, cls = '') => h('div', { class: `paper t-${tp
 export async function newNoteDialog({ notebookId = null, preset = null } = {}) {
   const s = getSettings();
   const nbs = await A.getNotebooks();
-  const st = { template: s.defaultTemplate || 'lined', paper: s.defaultPaper ?? null, title: '', preset: null, notebookId, text: undefined, tags: [] };
+  const st = { canvas: false, template: s.defaultTemplate || 'lined', paper: s.defaultPaper ?? null, title: '', preset: null, notebookId, text: undefined, tags: [] };
   const grid = h('div', { class: 'tpl-grid', role: 'radiogroup', 'aria-label': 'Template' });
   const gal = h('div', { class: 'tpl-gal' });
   const papers = h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': 'Paper color' });
@@ -23,7 +23,7 @@ export async function newNoteDialog({ notebookId = null, preset = null } = {}) {
   const nbSel = h('select', { class: 'input', 'aria-label': 'Notebook', onchange: (e) => { st.notebookId = e.target.value || null; } },
     h('option', { value: '' }, 'No notebook'), nbs.map((n) => h('option', { value: n.id, selected: n.id === notebookId }, A.notebookPath(nbs, n.id))));
   const paint = () => {
-    grid.replaceChildren(...TEMPLATES.map((t) => {
+    grid.replaceChildren(...TEMPLATES.filter((t) => !st.canvas || ['blank', 'lined', 'grid', 'dot'].includes(t.id)).map((t) => {
       const b = h('button', { type: 'button', class: 'tpl' + (st.template === t.id && !st.preset ? ' sel' : ''), role: 'radio', 'aria-checked': String(st.template === t.id && !st.preset), onclick: () => { st.template = t.id; st.preset = null; st.text = ''; paint(); } }, paperEl(t.id, st.paper), h('span', {}, t.label));
       return b;
     }));
@@ -31,19 +31,26 @@ export async function newNoteDialog({ notebookId = null, preset = null } = {}) {
     papers.replaceChildren(...PAPER_COLORS.map((c) => h('button', { type: 'button', class: 'swatch' + (st.paper === c.v ? ' sel' : ''), role: 'radio', 'aria-checked': String(st.paper === c.v), 'aria-label': c.label, title: c.label, style: { background: c.v || '#fff' }, onclick: () => { st.paper = c.v; paint(); } }, st.paper === c.v ? icon('check', 14) : null)));
   };
   if (preset) { const p = PRESETS.find((x) => x.id === preset); if (p) { st.preset = p.id; st.template = p.base; st.text = p.text; titleIn.placeholder = p.title; } }
+  const layoutSeg = h('div', { class: 'seg', role: 'radiogroup', 'aria-label': 'Layout' });
+  const paintLayout = () => {
+    layoutSeg.replaceChildren(...[[false, 'Pages', 'A4 pages, like paper'], [true, 'Free canvas', 'Endless board: pan, zoom, write anywhere']].map(([v, label, tip]) =>
+      h('button', { type: 'button', class: 'seg-b' + (st.canvas === v ? ' on' : ''), role: 'radio', 'aria-checked': String(st.canvas === v), title: tip, onclick: () => { st.canvas = v; if (v && !['dot', 'grid', 'lined', 'blank'].includes(st.template)) st.template = 'dot'; paintLayout(); paint(); } }, label)));
+  };
+  paintLayout();
   paint();
   let created = null;
   const m = openModal({
     title: 'New note', size: 'lg', className: 'newnote',
     body: [
       h('label', { class: 'field-label' }, 'Title'), titleIn,
+      h('label', { class: 'field-label' }, 'Layout'), layoutSeg,
       h('label', { class: 'field-label' }, 'Page style'), grid,
       h('label', { class: 'field-label' }, 'Template gallery'), gal,
       h('div', { class: 'row-2' }, h('div', {}, h('label', { class: 'field-label' }, 'Paper'), papers), h('div', {}, h('label', { class: 'field-label' }, 'Notebook'), nbSel)),
     ],
     actions: [{ label: 'Cancel', kind: 'ghost' }, {
       label: 'Create note', kind: 'primary', onClick: async () => {
-        created = await A.createNote({ title: st.title.trim() || undefined, template: st.template, paperColor: st.paper, notebookId: st.notebookId, preset: st.preset });
+        created = await A.createNote({ title: st.title.trim() || undefined, template: st.template, paperColor: st.paper, notebookId: st.notebookId, preset: st.canvas ? null : st.preset, canvas: st.canvas });
         if (!st.title.trim() && !st.preset) { created.title = ''; }
       },
     }],

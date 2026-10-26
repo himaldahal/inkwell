@@ -4,6 +4,8 @@ import { h, debounce, stripHtml, fmtDate } from '../core/utils.js';
 import { getRecord, putRecord, softDelete, listNotes } from '../core/db.js';
 import { on as busOn, toast } from '../core/store.js';
 import { Engine, MIN_ZOOM, MAX_ZOOM } from './engine.js';
+import { isCanvasNote } from './canvasmode.js';
+import { createMinimap } from './minimap.js';
 import { buildToolbar } from './toolbar.js';
 import { mountSidebar, pageMenu } from './sidebar.js';
 import { mountTextLayer } from './textlayer.js';
@@ -206,6 +208,10 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       ibtn('minus', 'Zoom out (-)', () => engine.setZoom(engine.zoom / 1.2), 'sm'), zPct, ibtn('plus', 'Zoom in (+)', () => engine.setZoom(engine.zoom * 1.2), 'sm'), ibtn('fit', 'Fit width (0)', () => engine.fitWidth(), 'sm'));
     const pageBtn = h('button', { type: 'button', class: 'ik-fab pg', title: 'Jump to page', 'aria-label': 'Page indicator, jump to page', onclick: () => jumpPop(pageBtn) }, '1 / 1');
     wrap.append(pageBtn, zoomBox);
+    if (isCanvasNote(note)) {
+      pageBtn.hidden = true; zPct.title = 'Zoom to fit everything'; zPct.setAttribute('aria-label', 'Zoom, press to fit everything');
+      zoomBox.classList.add('canvas'); wrap.append(createMinimap(engine));
+    }
     engine.on('zoom', (z) => { zPct.textContent = Math.round(z * 100) + '%'; });
     engine.on('page', ({ index, count, id }) => {
       pageBtn.textContent = `${index + 1} / ${count}`;
@@ -385,7 +391,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
         ...(enabled('excalidraw') ? [{ label: 'New infinite canvas page', icon: 'layout', run: () => engine.addInfinitePage() }, { label: engine.grid ? 'Snap to grid: on' : 'Snap to grid: off', icon: 'bg', run: () => { engine.grid = !engine.grid; pref.set('grid', engine.grid); toast('Grid snap ' + (engine.grid ? 'on' : 'off')); } }] : []),
         ...(enabled('ocr') ? [{ label: 'Recognize text on page', icon: 'type', run: () => runOcr(false) }] : []),
         { label: 'Page title / bookmark...', icon: 'file', run: () => { const t = prompt('Page title (leave empty to clear)', note.pages[engine.cur].title || ''); if (t != null) engine.setPageStyle(engine.cur, { title: t || null, bookmark: t ? true : null }); } },
-        { label: 'Fit width', icon: 'fit', run: () => engine.fitWidth() },
+        { label: engine.camPv() ? 'Zoom to fit everything' : 'Fit width', icon: 'fit', run: () => engine.fitWidth() },
         { label: 'Focus mode (F)', icon: 'focus', run: () => toggleFocus(true) },
         { label: 'Present (fullscreen + laser)', icon: 'laser', run: () => { toggleFocus(true); engine.setTool('laser'); engine.fitWidth(); root.requestFullscreen?.().catch(() => {}); } },
         { label: ref ? 'Close reference note' : 'Reference note (side by side)', icon: 'columns', run: () => toggleRef() },
@@ -554,6 +560,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       else if (k === '+' || k === '=') engine.setZoom(engine.zoom * 1.2);
       else if (k === '-') engine.setZoom(engine.zoom / 1.2);
       else if (k === '0') engine.fitWidth();
+      else if (k === '1' && engine.camPv()) engine.setZoom(1);
       else if (k === 'pagedown') engine.goToPage(engine.cur + 1);
       else if (k === 'pageup') engine.goToPage(engine.cur - 1);
     };
@@ -571,7 +578,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       if (txt && txt.trim()) {
         e.preventDefault(); const pv = engine.currentPv(), c = engine.visibleCenter(pv);
         const esc = (s) => s.replace(/[&<>]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m]));
-        engine.insertTextBox(pv, Math.max(0, c.x - 140), Math.max(0, c.y - 30), esc(txt).replace(/\n/g, '<br>'), txt);
+        engine.insertTextBox(pv, pv.canvas ? c.x - 140 : Math.max(0, c.x - 140), pv.canvas ? c.y - 30 : Math.max(0, c.y - 30), esc(txt).replace(/\n/g, '<br>'), txt);
       }
     };
     document.addEventListener('keydown', onKey); document.addEventListener('copy', onCopy); document.addEventListener('cut', onCut); document.addEventListener('paste', onPaste);

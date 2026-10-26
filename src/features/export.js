@@ -4,6 +4,7 @@ import { toast } from '../core/store.js';
 import { renderPdfPage } from './pdf.js';
 import { textToHtml } from './convert.js';
 import { makeZip } from './zip.js';
+import { flattenCanvas } from '../editor/canvasmode.js';
 
 // PDF is the only export format. Importing files INTO notes is still supported.
 export { importFiles } from './import.js';
@@ -161,6 +162,7 @@ async function drawItem(ctx, it) {
  * 'annotations' = strokes + items on a transparent canvas (used for non-flattened PDF export).
  */
 export async function renderPageToCanvas(page, note, opts = {}) {
+  page = flattenCanvas(page);
   const scale = opts.scale || 2, layer = opts.layer || 'all';
   const W = page.width || 820, H = page.height || 1160;
   const c = opts.canvas || document.createElement('canvas');
@@ -520,7 +522,7 @@ export async function buildNotePdf(note, opts = {}) {
   const L = { rgb, BlendMode };
   const scale = opts.scale || 2;
   const srcDocs = new Map();
-  const pages = note.pages || [];
+  const pages = (note.pages || []).map(flattenCanvas);
   const hasText = opts.includeText !== false && note.text && textBlocks(note.text).length;
   const total = pages.length + (hasText ? 1 : 0);
   let n = 0;

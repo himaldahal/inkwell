@@ -21,6 +21,11 @@ export async function createNote(opts = {}) {
     text, textIndex: stripHtml(text), tags: opts.tags || [],
   });
   note.pages[0].bg = tpl;
+  if (opts.canvas) {
+    // free canvas: one unbounded page with a camera; the paper pattern is kept if it suits an open board
+    note.mode = 'canvas';
+    Object.assign(note.pages[0], { canvas: true, bg: ['dot', 'grid', 'lined', 'blank'].includes(tpl) ? tpl : 'dot' });
+  }
   if (preset) note.preset = preset.id;
   await putRecord('notes', note);
   return note;

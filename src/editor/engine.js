@@ -18,6 +18,7 @@ import { createSelectTool } from './tools/select.js';
 import { createTextTool } from './tools/text.js';
 import { createShapeTool } from './tools/shape.js';
 import { createLaserTool } from './tools/laser.js';
+import { CAM_MIN, CAM_MAX, contentBounds, isCanvasNote } from './canvasmode.js';
 
 export const MIN_ZOOM = 0.3, MAX_ZOOM = 4;
 const lazy = (f) => { let p; return () => (p ||= f().catch((e) => { console.warn('optional module unavailable', e); return null; })); };
@@ -29,6 +30,7 @@ const DEFAULTS = {
   pencil: { color: '#374151', size: 2 },
   eraser: { size: 14, mode: 'stroke' },
   shape: { kind: 'rect', color: '#4f46e5', size: 3 },
+  select: { mode: 'free' },
   text: { color: '#111827', fontSize: 20 },
 };
 export const DRAW_TOOLS = ['pen', 'highlighter', 'pencil', 'shape'];
@@ -123,13 +125,21 @@ export class Engine {
     this.pvs = this.note.pages.map((p, i) => new PageView(this, p, i));
     for (const pv of this.pvs) { this.pagesEl.append(pv.el); this.byEl.set(pv.el, pv); }
     this.addBtn = h('button', { class: 'ik-addpage', type: 'button', onclick: () => this.addPage(this.pvs.length - 1) }, '+ Add page');
+    const cp = this.camPv();
+    this.pagesEl.classList.toggle('ik-canvasmode', !!cp);
+    if (cp) {
+      if (!cp.page.cam) cp.page.cam = { x: -this.scroll.clientWidth / 2, y: -this.scroll.clientHeight / 2, z: 1 };
+      this.fit = false; this.zoom = cp.cam.z; this.addBtn.hidden = true;
+    }
     this.pagesEl.append(this.addBtn);
-    this.applyZoom(this.fit ? this.fitZoom() : this.zoom, null, true);
+    this.applyZoom(cp ? cp.cam.z : this.fit ? this.fitZoom() : this.zoom, null, true);
     for (const pv of this.pvs) this.io.observe(pv.el);
     this.scroll.scrollTop = st;
     this.updateCurrent(true);
     this.emit('pages');
   }
+  /** the free-canvas page when this note is a canvas note, else null */
+  camPv() { return isCanvasNote(this.note) ? this.pvs[0] || null : null; }
   pvOf(page) { return this.pvs.find((p) => p.page === page); }
   pvById(id) { return this.pvs.find((p) => p.page.id === id); }
   pvAtClient(x, y) {
@@ -162,9 +172,53 @@ export class Engine {
     const pad = this.scroll.clientWidth < 700 ? 8 : 40;
     return clamp((this.scroll.clientWidth - pad) / maxW, MIN_ZOOM, MAX_ZOOM);
   }
-  fitWidth() { this.fit = true; this.applyZoom(this.fitZoom()); }
+  fitWidth() { if (this.camPv()) return this.fitContent(); this.fit = true; this.applyZoom(this.fitZoom()); }
+  /** canvas: frame everything on the board (or reset to the origin when empty) */
+  fitContent(smooth = true) {
+    const pv = this.camPv(); if (!pv) return;
+    const b = contentBounds(pv.page), vw = pv.vw || this.scroll.clientWidth, vh = pv.vh || this.scroll.clientHeight;
+    if (!b) return this.flyTo(pv, { x: -vw / 2, y: -vh / 2, z: 1 }, smooth);
+    const w = Math.max(b.x1 - b.x0, 80), hh = Math.max(b.y1 - b.y0, 80), padX = Math.min(120, vw * 0.12), padY = Math.min(140, vh * 0.16);
+    const z = clamp(Math.min((vw - padX * 2) / w, (vh - padY * 2) / hh, 1.6), CAM_MIN, CAM_MAX);
+    this.flyTo(pv, { x: (b.x0 + b.x1) / 2 - vw / 2 / z, y: (b.y0 + b.y1) / 2 - vh / 2 / z, z }, smooth);
+  }
+  /** animate the camera to {x, y, z} */
+  flyTo(pv, to, smooth = true) {
+    cancelAnimationFrame(this._fly);
+    const cam = pv.cam, from = { x: cam.x, y: cam.y, z: cam.z }, t0 = performance.now(), D = smooth ? 320 : 0;
+    const step = (now) => {
+      const k = D ? Math.min(1, (now - t0) / D) : 1, e = 1 - Math.pow(1 - k, 3);
+      // interpolate zoom in log space so the motion feels even
+      const z = Math.exp(Math.log(from.z) + (Math.log(to.z) - Math.log(from.z)) * e);
+      cam.x = from.x + (to.x - from.x) * e; cam.y = from.y + (to.y - from.y) * e;
+      this.zoom = z; pv.layout(z); this._camMoved(pv);
+      if (k < 1) this._fly = requestAnimationFrame(step);
+    };
+    this._fly = requestAnimationFrame(step);
+  }
+  _camMoved(pv) {
+    this.renderSelection(); if (this.peers.length) this.renderPresence();
+    this.emit('cam', pv); this.emit('zoom', pv.cam.z);
+  }
+  /** pan the camera (canvas) or scroll the page stack */
+  _panBy(dx, dy) {
+    const pv = this.camPv();
+    if (!pv) { this.scroll.scrollLeft -= dx; this.scroll.scrollTop -= dy; return; }
+    cancelAnimationFrame(this._fly);
+    pv.cam.x -= dx / pv.cam.z; pv.cam.y -= dy / pv.cam.z;
+    pv.redraw(); this._camMoved(pv);
+  }
   setZoom(z, cx, cy) { this.fit = false; this.applyZoom(z, cx == null ? null : { x: cx, y: cy }); }
   applyZoom(z, anchor, quiet) {
+    const cp = this.camPv();
+    if (cp) {
+      z = clamp(z, CAM_MIN, CAM_MAX);
+      const cam = cp.cam, r = cp.el.getBoundingClientRect();
+      const ax = anchor ? anchor.x - r.left : (cp.vw || r.width) / 2, ay = anchor ? anchor.y - r.top : (cp.vh || r.height) / 2;
+      const wx = cam.x + ax / cam.z, wy = cam.y + ay / cam.z;
+      cam.x = wx - ax / z; cam.y = wy - ay / z;
+      this.zoom = z; cp.layout(z); this._camMoved(cp); return;
+    }
     z = clamp(z, MIN_ZOOM, MAX_ZOOM);
     const old = this.zoom;
     const r = this.scroll.getBoundingClientRect();
@@ -180,7 +234,7 @@ export class Engine {
     this.emit('zoom', z);
   }
   _settle = (() => { let t; return () => { clearTimeout(t); t = setTimeout(() => { for (const pv of this.pvs) pv.rescale(); this.renderSelection(); }, 140); }; })();
-  onResize() { if (this.fit) this.applyZoom(this.fitZoom(), null, true); }
+  onResize() { const cp = this.camPv(); if (cp) this.applyZoom(cp.cam.z, null, true); else if (this.fit) this.applyZoom(this.fitZoom(), null, true); }
 
   // ---- history helpers ----
   snap(pv) { return { strokes: pv.page.strokes.slice(), items: pv.page.items.slice() }; }
@@ -332,7 +386,7 @@ export class Engine {
     }
     for (const p of this.peers) {
       const pv = this.pvById(p.pageId); if (!pv || p.x == null) continue;
-      const c = h('div', { class: 'ik-peer' + (p.laser ? ' laser' : ''), style: { transform: `translate(${p.x * this.zoom}px,${p.y * this.zoom}px)`, '--pc': p.color || '#ef4444' } },
+      const c = h('div', { class: 'ik-peer' + (p.laser ? ' laser' : ''), style: { transform: `translate(${pv.sx(p.x)}px,${pv.sy(p.y)}px)`, '--pc': p.color || '#ef4444' } },
         h('i', { class: 'cur' }), h('span', {}, p.name || ''));
       pv.pres.append(c);
     }
@@ -342,7 +396,8 @@ export class Engine {
     const now = performance.now(); if (now - (this._pt || 0) < 70) return; this._pt = now;
     if (!pv) return;
     const r = pv.el.getBoundingClientRect();
-    const m = { pageId: pv.page.id, x: Math.round((e.clientX - r.left) / this.zoom), y: Math.round((e.clientY - r.top) / this.zoom) };
+    const cm = pv.canvas ? pv.cam : { x: 0, y: 0 };
+    const m = { pageId: pv.page.id, x: Math.round((e.clientX - r.left) / this.zoom + cm.x), y: Math.round((e.clientY - r.top) / this.zoom + cm.y) };
     this.presCbs.forEach((cb) => cb(m));
   }
 
@@ -441,6 +496,7 @@ export class Engine {
 
   // ---- inserting media ----
   visibleCenter(pv) {
+    if (pv.canvas) return { x: pv.cam.x + pv.vw / 2 / pv.cam.z, y: pv.cam.y + pv.vh / 2 / pv.cam.z };
     const r = pv.el.getBoundingClientRect(), s = this.scroll.getBoundingClientRect();
     const top = Math.max(r.top, s.top), bot = Math.min(r.bottom, s.bottom), l = Math.max(r.left, s.left), rr = Math.min(r.right, s.right);
     return { x: ((l + rr) / 2 - r.left) / this.zoom, y: ((top + bot) / 2 - r.top) / this.zoom };
@@ -462,7 +518,7 @@ export class Engine {
       seedUrl(rec.id, blob);
       const dw = Math.min(w, pv.w * 0.6, 520), dh = dw * (hh / w);
       const c = at || this.visibleCenter(pv);
-      this.addItem(pv, { id: newId(), type: 'image', assetId: rec.id, x: clamp(c.x - dw / 2, 0, pv.w - dw), y: clamp(c.y - dh / 2, 0, Math.max(0, pv.h - dh)), w: dw, h: dh, rotation: 0 });
+      this.addItem(pv, { id: newId(), type: 'image', assetId: rec.id, x: pv.canvas ? c.x - dw / 2 : clamp(c.x - dw / 2, 0, pv.w - dw), y: pv.canvas ? c.y - dh / 2 : clamp(c.y - dh / 2, 0, Math.max(0, pv.h - dh)), w: dw, h: dh, rotation: 0 });
       this.setTool('select');
     } catch (e) { console.warn(e); toast('Could not add that image'); }
   }
@@ -483,7 +539,7 @@ export class Engine {
 
   insertEmbed(info, pv = this.currentPv()) {
     const c = this.visibleCenter(pv), w = info.kind === 'audio' ? 360 : info.kind === 'link' ? 340 : 480, hh = info.kind === 'audio' ? 90 : info.kind === 'link' ? 110 : 300;
-    this.addItem(pv, { id: newId(), type: 'embed', url: info.url, embedUrl: info.embedUrl, provider: info.provider, kind: info.kind, title: info.title, x: Math.max(0, c.x - w / 2), y: Math.max(0, c.y - hh / 2), w, h: hh, rotation: 0 });
+    this.addItem(pv, { id: newId(), type: 'embed', url: info.url, embedUrl: info.embedUrl, provider: info.provider, kind: info.kind, title: info.title, x: pv.canvas ? c.x - w / 2 : Math.max(0, c.x - w / 2), y: pv.canvas ? c.y - hh / 2 : Math.max(0, c.y - hh / 2), w, h: hh, rotation: 0 });
   }
   insertFrame(title, box) {
     const pv = this.currentPv(), c = this.visibleCenter(pv), b = box || { x0: c.x - 200, y0: c.y - 130, x1: c.x + 200, y1: c.y + 130 };
@@ -506,6 +562,10 @@ export class Engine {
   }
   zoomToBox(pv, b) {
     const w = b.x1 - b.x0, h = b.y1 - b.y0; if (w <= 0 || h <= 0) return;
+    if (pv.canvas) {
+      const z = clamp(Math.min((pv.vw - 120) / w, (pv.vh - 160) / h), CAM_MIN, CAM_MAX);
+      return this.flyTo(pv, { x: (b.x0 + b.x1) / 2 - pv.vw / 2 / z, y: (b.y0 + b.y1) / 2 - pv.vh / 2 / z, z });
+    }
     const z = clamp(Math.min((this.scroll.clientWidth - 80) / w, (this.scroll.clientHeight - 160) / h), MIN_ZOOM, MAX_ZOOM);
     this.fit = false; this.applyZoom(z, null, true);
     const r = pv.el.getBoundingClientRect(), s = this.scroll.getBoundingClientRect();
@@ -640,8 +700,9 @@ export class Engine {
     const sx = r.x + ux * t, sy = r.y + uy * t;
     const org = pt.pv._org, z = this.zoom;
     pt.cx = sx + wr.left; pt.cy = sy + wr.top;
-    pt.x = (pt.cx - (org.left - (this.scroll.scrollLeft - org.sl))) / z;
-    pt.y = (pt.cy - (org.top - (this.scroll.scrollTop - org.st))) / z;
+    const cm = pt.pv.canvas ? pt.pv.cam : { x: 0, y: 0 };
+    pt.x = (pt.cx - (org.left - (this.scroll.scrollLeft - org.sl))) / z + cm.x;
+    pt.y = (pt.cy - (org.top - (this.scroll.scrollTop - org.st))) / z + cm.y;
     pt.snapped = true; return pt;
   }
 
@@ -657,8 +718,12 @@ export class Engine {
     on(s, 'pointerleave', () => this._hideCursor());
     on(s, 'contextmenu', (e) => { e.preventDefault(); if (!this.readOnly) this.showRadial(e.clientX, e.clientY); });
     on(s, 'wheel', (e) => {
-      if (!e.ctrlKey && !e.metaKey) return;
-      e.preventDefault(); if (this.prefs.zoom !== 'locked') this.setZoom(this.zoom * Math.exp(-e.deltaY * 0.0022), e.clientX, e.clientY);
+      if (!e.ctrlKey && !e.metaKey) {
+        if (!this.camPv() || e.target.closest?.('[data-ik-ui]')) return;
+        e.preventDefault(); const k = e.deltaMode === 1 ? 16 : 1; // trackpad / wheel scrolling pans the board
+        this._panBy(e.shiftKey && !e.deltaX ? -e.deltaY * k : -e.deltaX * k, e.shiftKey && !e.deltaX ? 0 : -e.deltaY * k); return;
+      }
+      e.preventDefault(); if (this.prefs.zoom !== 'locked') this.setZoom(this.zoom * Math.exp(-e.deltaY * (this.camPv() ? 0.0032 : 0.0022)), e.clientX, e.clientY);
     }, { passive: false });
     on(s, 'scroll', throttle(() => { this.updateCurrent(); this.renderSelection(); }, 80), { passive: true });
     on(document, 'keyup', (e) => { if (e.key === ' ') { this.spaceDown = false; this.root.classList.remove('ik-space'); } });
@@ -668,8 +733,9 @@ export class Engine {
   _mk(e, pv) {
     const org = pv._org;
     const cx = e.clientX, cy = e.clientY;
-    const x = (cx - (org.left - (this.scroll.scrollLeft - org.sl))) / this.zoom;
-    const y = (cy - (org.top - (this.scroll.scrollTop - org.st))) / this.zoom;
+    const cm = pv.canvas ? pv.cam : { x: 0, y: 0 };
+    const x = (cx - (org.left - (this.scroll.scrollLeft - org.sl))) / this.zoom + cm.x;
+    const y = (cy - (org.top - (this.scroll.scrollTop - org.st))) / this.zoom + cm.y;
     let p = e.pressure;
     if (e.pointerType === 'mouse' || !p) p = 0.5;
     return { pv, x, y, p, e, cx, cy, type: e.pointerType, t: e.timeStamp };
@@ -725,10 +791,10 @@ export class Engine {
       t.x = e.clientX; t.y = e.clientY;
       if (this.mode === 'gesture') { this._gestureMove(); e.preventDefault(); return; }
       if (this.mode === 'three') { this.three.d = [...this.touches.values()].reduce((a, q) => a + q.x, 0) / this.touches.size - this.three.x; return; }
-      if (this.mode === 'pan') { this.scroll.scrollLeft -= dx; this.scroll.scrollTop -= dy; return; }
+      if (this.mode === 'pan') { this._panBy(dx, dy); return; }
     }
     if (this.mode === 'pan' && e.pointerId === this.panId) {
-      this.scroll.scrollLeft -= e.clientX - this.panLast.x; this.scroll.scrollTop -= e.clientY - this.panLast.y;
+      this._panBy(e.clientX - this.panLast.x, e.clientY - this.panLast.y);
       this.panLast = { x: e.clientX, y: e.clientY }; return;
     }
     if (this.mode === 'tool' && e.pointerId === this.activeId) {
@@ -792,7 +858,7 @@ export class Engine {
     const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2, d = Math.hypot(a.x - b.x, a.y - b.y);
     if (!g.moved && (Math.hypot(a.x - a.sx, a.y - a.sy) > 14 || Math.hypot(b.x - b.sx, b.y - b.sy) > 14)) g.moved = true;
     if (!g.moved || this.prefs.twoFinger === 'undo') return;
-    this.scroll.scrollLeft -= cx - g.cx; this.scroll.scrollTop -= cy - g.cy;
+    this._panBy(cx - g.cx, cy - g.cy);
     if (g.d > 10 && d > 10 && this.prefs.zoom !== 'locked') this.setZoom(this.zoom * (d / g.d), cx, cy);
     g.cx = cx; g.cy = cy; g.d = d;
   }
@@ -808,7 +874,7 @@ export class Engine {
 
   // auto-scroll when drawing near the viewport edge
   _autoscrollStart() {
-    if (this._asRaf || this.prefs.autoScroll === false) return;
+    if (this._asRaf || this.prefs.autoScroll === false || this.camPv()) return;
     const tick = () => {
       this._asRaf = 0;
       if (this.mode !== 'tool' || !this.lastClient || !DRAW_TOOLS.concat(['eraser', 'select']).includes(this._tool())) return;

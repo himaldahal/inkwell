@@ -1,6 +1,7 @@
 // Note preview thumbnails: background colour + template, PDF page, ink, items and typed text.
 import { drawTemplate, paperOf, patternOf } from './templates.js';
 import { paintPage } from './pages.js';
+import { flattenCanvas } from './canvasmode.js';
 import { getImage } from './assets.js';
 
 function wrap(ctx, text, maxW) {
@@ -30,7 +31,7 @@ export function paintTextPreview(ctx, note, W, H) {
   }
 }
 function compose(note, W, pdfCanvas) {
-  const pg = note.pages[0];
+  const pg = flattenCanvas(note.pages[0]);
   const hasContent = pg && (pg.type === 'pdf' || pg.strokes.some((s) => !s.deleted) || pg.items.some((i) => !i.deleted));
   const textOnly = !hasContent && (note.text || '').replace(/<[^>]*>/g, '').trim();
   const ratio = textOnly || !pg ? 1.3 : pg.height / pg.width, c = document.createElement('canvas');

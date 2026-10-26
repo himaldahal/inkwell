@@ -11,7 +11,7 @@ import { pref } from '../ui.js';
 export const clipboard = { data: null, n: 0 };
 
 export function createSelectTool(engine) {
-  let extra = new Set(), mode = null, pv = null, start = null, before = null, orig = null, box0 = null, handle = '', moved = false, lasso = [], tapStroke = null, lastTap = { id: null, t: 0 };
+  let extra = new Set(), mode = null, pv = null, start = null, before = null, orig = null, box0 = null, handle = '', moved = false, lasso = [], lassoFrom = null, tapStroke = null, lastTap = { id: null, t: 0 };
 
   const S = () => engine.selection;
   function selBox() {
@@ -82,11 +82,11 @@ export function createSelectTool(engine) {
         lastTap = { id: it?.id || hs?.id, t: performance.now() };
         return;
       }
-      engine.clearSelection(); mode = 'lasso'; lasso = [pt.x, pt.y];
+      engine.clearSelection(); mode = 'lasso'; lasso = [pt.x, pt.y]; lassoFrom = pt;
     },
     move(pt) {
       if (mode === 'lasso') {
-        lasso.push(pt.x, pt.y);
+        if (engine.settings.select?.mode === 'rect') { const a = lassoFrom; lasso = [a.x, a.y, pt.x, a.y, pt.x, pt.y, a.x, pt.y]; } else lasso.push(pt.x, pt.y);
         const c = pv.ctx('live'); pv.clearLive();
         c.save(); c.strokeStyle = '#4f46e5'; c.fillStyle = 'rgba(79,70,229,.08)'; c.lineWidth = 1.5 / engine.zoom; c.setLineDash([6 / engine.zoom, 4 / engine.zoom]);
         c.beginPath(); c.moveTo(lasso[0], lasso[1]); for (let i = 2; i < lasso.length; i += 2) c.lineTo(lasso[i], lasso[i + 1]); c.closePath(); c.fill(); c.stroke(); c.restore();
@@ -261,7 +261,8 @@ export function createSelectTool(engine) {
       const p = s.pv; p.sel.replaceChildren();
       const b = selBox(); if (!b) return;
       const z = engine.zoom;
-      const box = h('div', { class: 'ik-selbox', style: { left: b.x0 * z + 'px', top: b.y0 * z + 'px', width: (b.x1 - b.x0) * z + 'px', height: (b.y1 - b.y0) * z + 'px' } });
+      const L = p.sx(b.x0), T = p.sy(b.y0);
+      const box = h('div', { class: 'ik-selbox', style: { left: L + 'px', top: T + 'px', width: (b.x1 - b.x0) * z + 'px', height: (b.y1 - b.y0) * z + 'px' } });
       for (const hd of ['nw', 'ne', 'sw', 'se', 'rot']) box.append(h('div', { class: 'ik-handle ' + hd, 'data-handle': hd }));
       const hasText = [...s.items].some((id) => p.page.items.find((i) => i.id === id)?.type === 'text');
       const col = h('input', { type: 'color', class: 'ik-selcolor', title: 'Color', 'aria-label': 'Recolor' });
@@ -273,9 +274,9 @@ export function createSelectTool(engine) {
         hasText ? mk('type', 'Convert to typed notes', () => api.toTyped()) : null,
         mk('more', 'More: group, align, flip, order', (e) => api.moreMenu(e.currentTarget)),
         mk('trash', 'Delete', () => api.delete()));
-      const barTop = b.y0 * z - 46;
-      bar.style.left = Math.max(4, Math.min(p.w * z - 200, b.x0 * z)) + 'px';
-      bar.style.top = (barTop < 2 ? b.y1 * z + 12 : barTop) + 'px';
+      const barTop = T - 46, vwPx = p.canvas ? p.vw : p.w * z;
+      bar.style.left = Math.max(4, Math.min(vwPx - 200, L)) + 'px';
+      bar.style.top = (barTop < 2 ? p.sy(b.y1) + 12 : barTop) + 'px';
       p.sel.append(box, bar);
     },
   };

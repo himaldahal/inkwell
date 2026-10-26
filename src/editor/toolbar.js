@@ -173,7 +173,13 @@ export function buildToolbar(engine, act) {
       sysBtn?.append(h('b', {}, 'Sys'));
       opts.append(textRow(), fs, importBtn, sysBtn, fi, colorRow('text', c), sizeRow('text', c));
     } else if (tool === 'select') {
-      opts.append(h('span', { class: 'ik-hint' }, 'Draw a loop to select strokes and objects, or tap one. Drag to move, corners to resize.'));
+      const sm = c.mode === 'rect' ? 'rect' : 'free';
+      const seg = h('div', { class: 'ik-seg', role: 'radiogroup', 'aria-label': 'Selection shape' },
+        ...[['free', 'Freehand', 'Draw a loop around what you want'], ['rect', 'Rectangle', 'Drag a box around what you want']].map(([k, label, tip]) => {
+          const b = h('button', { type: 'button', class: sm === k ? 'on' : '', role: 'radio', 'aria-checked': String(sm === k), title: tip }, label);
+          b.addEventListener('click', () => engine.set('select', { mode: k })); return b;
+        }));
+      opts.append(seg, h('span', { class: 'ik-hint' }, sm === 'rect' ? 'Drag a rectangle to select strokes and objects, or tap one. Corners resize.' : 'Draw a loop to select strokes and objects, or tap one. Corners resize.'));
     } else if (tool === 'laser') {
       opts.append(h('span', { class: 'ik-hint' }, 'Laser pointer: drag to point. Nothing is saved.'));
     } else if (tool === 'hand') {
