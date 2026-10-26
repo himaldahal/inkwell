@@ -13,6 +13,8 @@ import { isNoteLocked, requireUnlock } from './lock.js';
 import { createPreview } from './preview.js';
 import { isEnabled } from '../core/modules.js';
 import { confirmDialog } from './dom.js';
+import { getMe, userName } from './config.js';
+import { drawTemplateThumb, recentPresets, rememberPreset } from './templategallery.js';
 
 const DT = 'application/x-inkwell';
 const CHUNK = 36;
@@ -85,6 +87,12 @@ export function createLibrary() {
   on('presence:update', (d) => { if (!d?.noteId || !isEnabled('collab')) return; const c = (d.users || []).length; if (c) presence.set(d.noteId, c); else presence.delete(d.noteId); paintPresence(); });
 
   // ----- header -----
+  /** time-of-day greeting for the home dashboard */
+  const greeting = () => {
+    const hr = new Date().getHours(), g = hr < 5 ? 'Good night' : hr < 12 ? 'Good morning' : hr < 18 ? 'Good afternoon' : 'Good evening';
+    const me = getMe(), nm = me ? String(userName(me) || '').split(/[\s@]/)[0] : '';
+    return nm ? `${g}, ${nm}` : g;
+  };
   const titleFor = () => {
     const r = route;
     if (query) return 'Search';
@@ -93,7 +101,7 @@ export function createLibrary() {
       case 'search': return 'Search'; case 'tag': return '#' + r.params.tag;
       case 'smart': return SMART.find((s) => s.id === r.params.id)?.label || 'Smart filter';
       case 'notebook': { const n = nbs.find((x) => x.id === r.params.id); return n ? n.name : 'Notebook'; }
-      default: return 'All notes';
+      default: return greeting();
     }
   };
   function paintHead() {
@@ -103,7 +111,8 @@ export function createLibrary() {
     viewBtn.title = viewBtn.getAttribute('aria-label');
     titleEl.textContent = titleFor();
     const crumbs = route.name === 'notebook' && !query ? A.notebookPath(nbs, route.params.id) : '';
-    subEl.textContent = query ? plural(notes.length, 'result') : (crumbs && crumbs !== titleFor() ? crumbs + ' - ' : '') + plural(notes.length, 'note');
+    const home = route.name === 'all' && !query;
+    subEl.textContent = home ? new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' }) + ' · ' + plural(notes.length, 'note') : query ? plural(notes.length, 'result') : (crumbs && crumbs !== titleFor() ? crumbs + ' - ' : '') + plural(notes.length, 'note');
     head.replaceChildren(
       h('button', { class: 'icon-btn sb-toggle', type: 'button', 'aria-label': 'Show sidebar', title: 'Show sidebar', onclick: () => { updateSettings({ sidebarCollapsed: false }); document.documentElement.classList.remove('sb-collapsed'); } }, icon('sidebar', 20)),
       h('div', { class: 'lib-titles' }, titleEl, subEl),
@@ -248,6 +257,41 @@ export function createLibrary() {
       h('button', { class: 'row-more card-more', type: 'button', 'aria-label': 'Note actions', tabindex: '-1', 'data-more': '1' }, icon('more', 18)));
     return card;
   }
+  const go = (n) => navigate('/note/' + encodeURIComponent(n.id));
+  /** one-tap ways to start writing, straight from the dashboard */
+  function quickStart() {
+    const defTpl = getSettings().defaultTemplate || 'lined';
+    const card = (ic, title, text, fn, cls = '') => h('button', { class: 'qs-card ' + cls, type: 'button', onclick: fn }, h('span', { class: 'qs-ic' }, icon(ic, 22)), h('span', { class: 'qs-t' }, h('b', {}, title), h('small', {}, text)));
+    return h('div', { class: 'qs', role: 'group', 'aria-label': 'Start writing' },
+      card('plus', 'New note', 'Pick paper and layout', () => newNoteDialog({ notebookId: curNb() }), 'primary'),
+      card('list', 'Seamless', 'One endless sheet', async () => go(await A.createNote({ layout: 'seamless', template: defTpl, notebookId: curNb() }))),
+      card('focus', 'Free canvas', 'Board without edges', async () => go(await A.createNote({ layout: 'canvas', canvas: true, template: 'dot', notebookId: curNb() }))),
+      card('grid', 'Templates', '130 ready layouts', async () => { const { templatePicker } = await import('./dialogs.js'); const p = await templatePicker(); if (p) go(await A.createNote({ preset: p.id, template: p.base, notebookId: curNb() })); }),
+      card('calendar', 'Daily note', 'Today, one tap', async () => go(await A.openDailyNote())),
+      isEnabled('pdf') ? card('upload', 'Import', 'PDF or images', importPdf) : null);
+  }
+  /** a row of ready-made layouts: your recent ones first, then good defaults */
+  function templateShelf() {
+    const fill = ['planner', 'daily-focus', 'cornell', 'meeting', 'weekly-review', 'journal-entry', 'kanban', 'habit-week', 'lecture', 'budget'];
+    const ids = [...new Set([...recentPresets(), ...fill])].filter((id) => PRESETS.some((p) => p.id === id)).slice(0, 9);
+    const cards = ids.map((id) => {
+      const p = PRESETS.find((x) => x.id === id), cv = h('canvas', { class: 'ts-cv' });
+      const b = h('button', { class: 'ts-card', type: 'button', title: p.label + ' (' + p.cat + ')', onclick: async () => { rememberPreset(p.id); go(await A.createNote({ preset: p.id, template: p.base, notebookId: curNb() })); } }, cv, h('span', { class: 'ellipsis' }, p.label));
+      requestAnimationFrame(() => drawTemplateThumb(cv, id, null, 110));
+      return b;
+    });
+    return h('div', { class: 'shelf-wrap' }, h('div', { class: 'shelf-head' }, h('h2', {}, recentPresets().length ? 'Your templates' : 'Start from a template'),
+      h('button', { class: 'link-btn', type: 'button', onclick: async () => { const { templatePicker } = await import('./dialogs.js'); const p = await templatePicker(); if (p) go(await A.createNote({ preset: p.id, template: p.base, notebookId: curNb() })); } }, 'Browse all')),
+      h('div', { class: 'shelf ts-shelf' }, cards));
+  }
+  /** subjects (notebooks) at a glance */
+  function subjectShelf() {
+    const tops = nbs.filter((b) => !b.parentId && !b.trashedAt).slice(0, 8); if (!tops.length) return null;
+    const count = (id) => notes.filter((n) => n.notebookId === id).length;
+    return h('div', { class: 'shelf-wrap' }, h('div', { class: 'shelf-head' }, h('h2', {}, 'Subjects')),
+      h('div', { class: 'shelf nb-shelf' }, tops.map((nb) => h('a', { class: 'nb-card', href: href('/notebook/' + encodeURIComponent(nb.id)) },
+        h('span', { class: 'nb-ic', style: { background: (nb.color || '#4f46e5') + '26', color: nb.color || '#4f46e5' } }, nb.icon || '📓'), h('span', { class: 'qs-t' }, h('b', { class: 'ellipsis' }, nb.name), h('small', {}, plural(count(nb.id), 'note')))))));
+  }
   function paintTop() {
     top.replaceChildren();
     if (route.name === 'trash' && (notes.length || trashNbs.length)) {
@@ -264,11 +308,12 @@ export function createLibrary() {
     if (route.name === 'all' && !query && loaded) {
       A.computeStats().then((st) => {
         if (route.name !== 'all' || query) return;
+        top.append(quickStart());
         top.append(h('div', { class: 'stats', 'aria-label': 'Your activity' },
           h('div', { class: 'stat' }, h('span', { class: 'stat-ic flame' }, icon('flame', 18)), h('div', {}, h('b', {}, st.streak), h('small', {}, st.streak === 1 ? 'day streak' : 'day streak'))),
           h('div', { class: 'stat' }, h('span', { class: 'stat-ic' }, icon('file', 18)), h('div', {}, h('b', {}, st.notes), h('small', {}, 'notes'))),
           h('div', { class: 'stat' }, h('span', { class: 'stat-ic' }, icon('edit', 18)), h('div', {}, h('b', {}, st.week), h('small', {}, 'edited this week'))),
-          h('button', { class: 'stat daily', type: 'button', onclick: async () => { const n = await A.openDailyNote(); navigate('/note/' + encodeURIComponent(n.id)); } }, h('span', { class: 'stat-ic' }, icon('calendar', 18)), h('div', {}, h('b', {}, 'Today'), h('small', {}, 'Open daily note')))));
+          null));
         let opened = []; try { opened = JSON.parse(localStorage.getItem('inkwell:opened') || '[]'); } catch { /* ignore */ }
         const byId = new Map(notes.map((n) => [n.id, n]));
         const row = [...new Set([...opened.filter((i) => byId.has(i)), ...[...notes].sort((a, b) => b.updatedAt - a.updatedAt).map((n) => n.id)])].slice(0, 8).map((i) => byId.get(i));
@@ -276,9 +321,10 @@ export function createLibrary() {
           const lk = isNoteLocked(n);
           return h('button', { class: 'mini' + (i === 0 ? ' first' : ''), type: 'button', 'aria-label': 'Open ' + (n.title || 'Untitled'), onclick: (e) => { e.currentTarget.querySelector('.thumb').style.viewTransitionName = 'note-zoom'; openNote(n.id); } },
             h('div', { class: 'thumb' }, n.preview && !lk ? h('img', { src: n.preview, alt: '', loading: 'lazy' }) : paperEl(n.template, n.paperColor)),
-            i === 0 ? h('span', { class: 'first-tag' }, 'Last opened') : null, h('span', { class: 'ellipsis' }, n.title || 'Untitled'));
+            i === 0 ? h('span', { class: 'first-tag' }, 'Last opened') : null, h('span', { class: 'ellipsis' }, n.title || 'Untitled'), h('small', {}, fmtDate(n.updatedAt)));
         }))));
-        if (!getSettings().tipsDismissed && st.notes < 6) {
+        top.append(templateShelf()); const sj = subjectShelf(); if (sj) top.append(sj);
+        if (false && !getSettings().tipsDismissed && st.notes < 6) { // the quick-start cards above replace the first-run tips
           const tip = TIPS[st.notes % TIPS.length];
           top.append(h('div', { class: 'tip' }, icon('zap', 18), h('div', { class: 'grow' }, h('b', {}, tip[0]), h('span', {}, ' ' + tip[1])), iconBtn('x', 'Dismiss tips', () => { updateSettings({ tipsDismissed: true }); paintTop(); }, { size: 16, class: 'sm' })));
         }

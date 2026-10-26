@@ -8,6 +8,15 @@ const W = 820, H = 1160;
 export const recentPresets = () => { try { return JSON.parse(localStorage.getItem(RECENT_KEY) || '[]').filter((id) => PRESETS.some((p) => p.id === id)); } catch { return []; } };
 export const rememberPreset = (id) => { try { localStorage.setItem(RECENT_KEY, JSON.stringify([id, ...recentPresets().filter((x) => x !== id)].slice(0, 8))); } catch { /* storage unavailable */ } };
 
+/** paint a template preview into a canvas (used by the gallery and the home shelf) */
+export function drawTemplateThumb(cv, id, paper = null, w = 150) {
+  const p = PRESETS.find((x) => x.id === id); if (!p) return;
+  const dpr = Math.min(2, window.devicePixelRatio || 1), hh = Math.round((w * H) / W);
+  cv.width = Math.round(w * dpr); cv.height = Math.round(hh * dpr);
+  const c = cv.getContext('2d'); c.setTransform((w * dpr) / W, 0, 0, (hh * dpr) / H, 0, 0);
+  drawTemplate(c, W, H, p.base, paper || '#ffffff', p.ops || ['planner', 'weekly', 'staff', 'graph'].includes(p.id) ? p.id : null);
+}
+
 /**
  * opts: { paper, selected, onSelect(preset), onOpen(preset) }  (onOpen = double click / Enter on a card)
  * returns { el, setPaper(color), focusSearch() }
