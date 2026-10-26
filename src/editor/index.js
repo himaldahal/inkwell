@@ -169,6 +169,8 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
     engine.on('appendTyped', (html) => { textLayer.append(html); if (view === 'ink') setView(wide() ? 'split' : view); });
 
     const applyTyping = () => { engine.applyPrefs(); const t = engine.typing; textLayer.el.spellcheck = t.spell; textLayer.el.setAttribute('autocorrect', t.autocorrect ? 'on' : 'off'); engine.onResize(); };
+    const applyLayout = () => { let l = 'notability'; try { l = getSetting('editor.layout') || 'notability'; } catch { /* ignore */ } root.classList.toggle('ik-nota', l === 'notability'); };
+    applyLayout(); cleanup.push(busOn('settings:changed', applyLayout));
     applyTyping(); cleanup.push(busOn('settings:changed', applyTyping));
     if (!engine._hadSaved) {
       const g = (k) => { try { return getSetting(k); } catch { return undefined; } };
@@ -208,6 +210,23 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       vb[id] = h('button', { type: 'button', class: 'ik-segb ' + id, role: 'tab', title: label, 'aria-label': label, onclick: () => setView(id) }, icon(ic, 18)); viewSeg.append(vb[id]);
     }
     const header = h('header', { class: 'ik-header' }, back, title, pill, avatars, viewSeg, h('div', { class: 'ik-hact' }, favBtn, pinBtn, tagBtn, searchBtn, recBtn, shareBtn, expBtn, sideBtn), moreBtn);
+
+    // ---------- floating chrome (Notability-style layout) ----------
+    const flBack = ibtn('back', 'Back', async () => { await flush(); onClose?.(); }, 'ik-fl');
+    const flUndo = ibtn('undo', 'Undo', () => engine.undo(), 'ik-fl'), flRedo = ibtn('redo', 'Redo', () => engine.redo(), 'ik-fl');
+    const flShare = ibtn('share', 'Export or share', () => exportMenu(), 'ik-fl noro-x');
+    const flText = ibtn('doc', 'Typed notes', () => setView(view === 'text' ? 'ink' : 'text'), 'ik-fl');
+    const flPages = ibtn('copy', 'Pages panel', () => toggleSide(), 'ik-fl');
+    const flMore = ibtn('more', 'More', (e, b) => moreMenu(b), 'ik-fl');
+    const floatL = h('div', { class: 'ik-float l' }, flBack, h('span', { class: 'ik-pill', hidden: !readOnly }, 'View only'));
+    const floatR = h('div', { class: 'ik-float r' }, flUndo, flRedo, h('span', { class: 'ik-vsep' }), flShare, flMore, flText, flPages);
+    const syncHist = () => { flUndo.disabled = !engine.history.canUndo; flRedo.disabled = !engine.history.canRedo; };
+    engine.on('history', syncHist); syncHist();
+    const pgUp = ibtn('up', 'Previous page', () => engine.goToPage(engine.cur - 1), 'sm'), pgDn = ibtn('down', 'Next page', () => engine.goToPage(engine.cur + 1), 'sm');
+    const pgNum = h('button', { type: 'button', class: 'ik-pgnum', 'aria-label': 'Go to page' }, h('b', {}, '1'), h('i', {}), h('span', {}, '1'));
+    pgNum.addEventListener('click', () => jumpPop(pgNum));
+    const pager = h('div', { class: 'ik-pager' }, pgUp, pgNum, pgDn);
+    engine.on('page', ({ index, count }) => { pgNum.firstChild.textContent = String(index + 1); pgNum.lastChild.textContent = String(count); pager.hidden = isCanvasNote(note); });
 
     // ---------- zoom / page fabs ----------
     const zPct = h('button', { type: 'button', class: 'ik-btn zp', title: 'Fit to width', 'aria-label': 'Zoom, press to fit width', onclick: () => engine.fitWidth() }, '100%');
@@ -260,6 +279,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       pickImage: () => imgInput.click(),
       stickers: stickerPop,
       toggleRuler: () => { ruler.toggle(); tb.refresh(); },
+      record: (el) => recClick(el), penSettings: () => import('../ui/calibrate.js').then((m) => m.openPenSettings()),
       toggleOptions: (v) => root.classList.toggle('ik-opt-open', v === undefined ? undefined : !!v),
       sticky: (c) => engine.insertSticky(c),
       library: (a) => import('./libs.js').then((m) => m.openLibrary(a, engine)),
@@ -276,7 +296,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
     engine.on('menu', ({ anchor, items }) => menu(anchor, items, { align: 'start' }));
     cleanup.push(() => tb.destroy());
 
-    root.append(header, tb.el, tb.opts, main, recbar, imgInput, pdfInput,
+    root.append(header, floatL, floatR, tb.el, tb.opts, main, pager, recbar, imgInput, pdfInput,
       h('button', { type: 'button', class: 'ik-focus-exit', title: 'Exit focus mode (F)', 'aria-label': 'Exit focus mode', onclick: () => toggleFocus(false) }, icon('focus', 18)));
     root.dataset.tool = engine.tool;
     const sidebar = mountSidebar(sideHost, engine); cleanup.push(() => sidebar.destroy());
@@ -404,6 +424,12 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
     function moreMenu(anchor) {
       const rec = engine.audioMod?.getActiveRecorder(note.id);
       menu(anchor, [
+        ...(root.classList.contains('ik-nota') ? [
+          { label: 'Rename...', icon: 'type', run: () => { const t = prompt('Note title', note.title || ''); if (t != null) { note.title = t; title.value = t; dirty = true; save(); toast('Renamed'); } } },
+          { label: 'Handwriting view', icon: 'pen', run: () => setView('ink') }, { label: 'Typed notes view', icon: 'doc', run: () => setView('text') },
+          ...(wide() ? [{ label: 'Split view', icon: 'columns', run: () => setView('split') }] : []),
+          { label: 'Share with people...', icon: 'users', run: () => shareBtn.click() }, '-',
+        ] : []),
         { label: note.favorite ? 'Remove favorite' : 'Favorite', icon: 'star', run: () => favBtn.click() },
         { label: note.pinned ? 'Unpin' : 'Pin', icon: 'pin', run: () => pinBtn.click() },
         { label: 'Search in typed notes', icon: 'search', run: () => searchBtn.click() },

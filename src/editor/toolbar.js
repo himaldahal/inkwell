@@ -25,25 +25,29 @@ const EMOJI = '😀 😂 😍 🤔 😎 😴 👍 👎 👏 🙏 💡 ⭐ ✅ �
 const fontLib = { extra: [], recent: () => pref.get('recentfonts', []), note(f) { pref.set('recentfonts', [f, ...fontLib.recent().filter((x) => x !== f)].slice(0, 5)); } };
 export function buildToolbar(engine, act) {
   import('./fonts.js').then(async (m) => { const l = await m.loadSavedFonts(); fontLib.extra = l.map((f) => [f, m.fontStack(f)]); if (engine.tool === 'text') render(); }).catch(() => {});
+  // two pages of tools (the chevron flips between them in the floating layout; the classic bar shows both)
   const TOOLS = [
-    ['pen', 'Pen (P)'], ['highlighter', 'Highlighter (H)'], ['pencil', 'Pencil (N)'], ['eraser', 'Eraser (E)'], ['select', 'Select (V)'], 'sep',
-    ['shape', 'Shapes (S)'], ['text', 'Text box (T)'], ['insert', 'Insert: image, sticker, library', 'action'], 'sep',
-    ['laser', 'Laser pointer (L)'], ['hand', 'Hand / pan (Space)'], ['ruler', 'Ruler (R)', 'toggle'],
+    ['pen', 'Pen (P)', '', 1], ['highlighter', 'Highlighter (H)', '', 1], ['pencil', 'Pencil (N)', '', 1], ['eraser', 'Eraser (E)', '', 1], ['select', 'Select (V)', '', 1], 'sep1',
+    ['shape', 'Shapes (S)', '', 1], ['text', 'Text box (T)', '', 1], ['hand', 'Hand / pan (Space)', '', 1], 'sep2',
+    ['insert', 'Insert: image, sticker, library', 'action', 2], ['laser', 'Laser pointer (L)', '', 2], ['ruler', 'Ruler (R)', 'toggle', 2],
   ];
+  // extra buttons that only exist in the floating layout's second page
+  const EXTRAS = [['image', 'Add image', () => act.pickImage()], ['mic', 'Record audio', (e, el) => act.record?.(el)], ['sliders', 'Pen and touch settings', () => act.penSettings?.()]];
   const COLORED = ['pen', 'highlighter', 'pencil', 'shape', 'text'];
   const tools = h('div', { class: 'ik-tools', role: 'toolbar', 'aria-label': 'Tools' });
   const btns = {};
   for (const t of TOOLS) {
-    if (t === 'sep') { tools.append(h('span', { class: 'ik-tsep', 'aria-hidden': 'true' })); continue; }
-    const [id, label, kind] = t;
+    if (typeof t === 'string') { tools.append(h('span', { class: 'ik-tsep', 'aria-hidden': 'true', 'data-p': t === 'sep1' ? '1' : '2' })); continue; }
+    const [id, label, kind, pg] = t;
     const b = ibtn(id === 'insert' ? 'plus' : id, label, (e, el) => {
       if (id === 'insert') insertMenu(el);
       else if (id === 'ruler') act.toggleRuler();
       else if (id === engine.tool) act.toggleOptions(true); // tapping the active tool opens its tray
       else { act.toggleOptions(false); engine.setTool(id); }
     }, 'tool t-' + id);
-    b.dataset.tool = id; if (!kind) b.setAttribute('aria-pressed', 'false'); btns[id] = b; tools.append(b);
+    b.dataset.tool = id; b.dataset.p = String(pg); if (!kind) b.setAttribute('aria-pressed', 'false'); btns[id] = b; tools.append(b);
   }
+  for (const [ic, label, fn] of EXTRAS) { const b = ibtn(ic, label, (e, el) => fn(e, el), 'tool ik-extra'); b.dataset.p = '2'; tools.append(b); }
   function insertMenu(anchor) {
     const item = (ic, name, fn) => { const b = h('button', { type: 'button', class: 'ik-menu-item' }, icon(ic, 18), h('span', {}, name)); b.addEventListener('click', () => { closePopover(); setTimeout(fn, 0); }); return b; };
     popover(anchor, h('div', { class: 'ik-menu' }, item('image', 'Image or photo', () => act.pickImage()), item('sticker', 'Stickers', () => act.stickers(anchor)), item('library', 'Element library', () => act.library(anchor))), {});
@@ -53,7 +57,10 @@ export function buildToolbar(engine, act) {
   const optBtn = ibtn('sliders', 'Tool options', () => act.toggleOptions(), 'optbtn');
   const swatchNow = h('span', { class: 'ik-now' });
   optBtn.append(swatchNow);
-  const bar = h('div', { class: 'ik-toolbar' }, tools, h('div', { class: 'ik-histbtns' }, undo, redo), optBtn);
+  let tpage = 1;
+  const tpageBtn = ibtn('down', 'More tools', () => { tpage = tpage === 1 ? 2 : 1; bar.dataset.page = String(tpage); tpageBtn.setAttribute('aria-label', tpage === 1 ? 'More tools' : 'Back to drawing tools'); }, 'ik-tpage');
+  const qrow = h('div', { class: 'ik-qrow', 'aria-label': 'Colour and size' });
+  const bar = h('div', { class: 'ik-toolbar', 'data-page': '1' }, h('div', { class: 'ik-trow' }, tools, tpageBtn, h('div', { class: 'ik-histbtns' }, undo, redo), optBtn), qrow);
   const opts = h('div', { class: 'ik-options', role: 'group', 'aria-label': 'Tool options' });
 
   // ---- options rendering ----
@@ -212,6 +219,47 @@ export function buildToolbar(engine, act) {
     }
     opts.classList.toggle('empty', !opts.childNodes.length);
     swatchNow.style.background = c?.color || 'transparent';
+    paintQuick();
+  }
+  // ---- quick colour + size row (floating layout) ----
+  const QBASE = ['#111827', '#dc2626', '#ea580c', '#f59e0b', '#16a34a', '#2563eb', '#7c3aed', '#db2777'];
+  const QSIZE = { pen: [1.5, 3, 6], highlighter: [10, 18, 32], pencil: [1, 2.5, 5], shape: [2, 4, 8], eraser: [8, 14, 28], text: [16, 22, 36] };
+  function paintQuick() {
+    const tool = engine.tool, c = engine.settings[tool], sizes = QSIZE[tool];
+    qrow.replaceChildren();
+    const key = tool === 'text' ? 'fontSize' : 'size';
+    if (!c || (!COLORED.includes(tool) && !sizes)) { qrow.hidden = true; return; }
+    qrow.hidden = false;
+    if (COLORED.includes(tool) && c.color) {
+      const base = tool === 'highlighter' ? HL_PALETTE : QBASE;
+      let list = [...new Set([...pref.get('favcolors', []).slice(0, 2), ...engine.recent.slice(0, 3), ...base].map((x) => x.toLowerCase()))].slice(0, 8);
+      if (!list.includes(c.color.toLowerCase())) list = [c.color.toLowerCase(), ...list.slice(0, 7)];
+      const grp = h('div', { class: 'ik-qcols', role: 'radiogroup', 'aria-label': 'Colour' });
+      for (const col of list) {
+        const on = col === c.color.toLowerCase();
+        const b = h('button', { type: 'button', class: 'ik-qs' + (on ? ' on' : ''), style: { background: col }, 'aria-label': 'Colour ' + col, role: 'radio', 'aria-checked': String(on) });
+        b.addEventListener('mousedown', (e) => e.preventDefault());
+        b.addEventListener('click', () => { if (engine.editing) act.textColor(col); engine.set(tool, { color: col }); });
+        grp.append(b);
+      }
+      const plus = h('button', { type: 'button', class: 'ik-qs add', 'aria-label': 'More colours', title: 'More colours' }, '+');
+      plus.addEventListener('mousedown', (e) => e.preventDefault());
+      plus.addEventListener('click', () => openColorPicker(plus, { color: /^#[0-9a-f]{6}$/i.test(c.color) ? c.color : '#000000', alpha: c.alpha ?? 1, withAlpha: tool !== 'text', onChange: (hex, a) => { if (engine.editing) act.textColor(hex); engine.settings[tool].color = hex; if (tool !== 'text') engine.settings[tool].alpha = a; engine.saveSettings(); engine.emit('settings', tool); } }));
+      grp.append(plus); qrow.append(grp);
+    }
+    if (sizes) {
+      if (qrow.childNodes.length) qrow.append(h('span', { class: 'ik-vsep' }));
+      const cur = c[key] ?? sizes[1], near = sizes.reduce((bi, v, i) => (Math.abs(v - cur) < Math.abs(sizes[bi] - cur) ? i : bi), 0);
+      const grp = h('div', { class: 'ik-qsizes', role: 'radiogroup', 'aria-label': 'Size' });
+      sizes.forEach((v, i) => {
+        const b = h('button', { type: 'button', class: 'ik-qz' + (i === near ? ' on' : ''), 'aria-label': 'Size ' + v, role: 'radio', 'aria-checked': String(i === near) }, h('i', { style: { width: [7, 12, 18][i] + 'px', height: [7, 12, 18][i] + 'px' } }));
+        b.addEventListener('mousedown', (e) => e.preventDefault());
+        b.addEventListener('click', () => { engine.set(tool, { [key]: v }); if (tool === 'text') act.textSize(v); });
+        grp.append(b);
+      });
+      qrow.append(grp);
+    }
+    const more = ibtn('sliders', 'All options', () => act.toggleOptions(), 'sm ik-qmore'); qrow.append(more);
   }
   function refresh() {
     { const cc = engine.settings[engine.tool]?.color; swatchNow.style.background = cc || 'transparent'; swatchNow.style.display = cc ? '' : 'none'; }

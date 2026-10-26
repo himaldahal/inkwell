@@ -31,6 +31,7 @@ export const SECTIONS = [
     { key: 'defaultPaper', label: 'Default paper color', type: 'paper', options: PAPER_COLORS },
   ] },
   { id: 'pen', title: 'Pen & touch', icon: 'edit', items: [
+    S('editor.layout', 'Writing screen', [['notability', 'Floating tools'], ['classic', 'Classic bar']], 'Floating tools give the page the whole screen'),
     { type: 'calibrate' },
     SW('editor.autoCalibrate', 'Calibrate automatically', 'Learns your pressure range and hand steadiness as you write, separately for pencil, finger and mouse'),
     SW('editor.smoothingAuto', 'Automatic smoothing', 'Pick the smoothing for each input from what was learned. Turn off to use the slider'),

@@ -28,6 +28,7 @@ export const DEFAULTS = {
     palmRejection: 'auto',       // off | auto | strict
     inputMode: 'any',            // any | pencil-only
     smoothing: 40, pressureCurve: 'normal', // soft | normal | firm
+    layout: 'notability', // notability = floating pills over the page | classic = top bar
     smoothingAuto: true, autoCalibrate: true, calib: null, // calib: { pmin, pmax, smoothBy: { pen, touch, mouse }, ... } learned from the user's writing
     prediction: true, zoomSpeed: 100, momentum: true, smartZoom: true, snapDelay: 520,
     zoom: 'pinch', snap: false, guides: false, scrollDir: 'vertical', autoScroll: true,
