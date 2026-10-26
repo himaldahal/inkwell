@@ -254,7 +254,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       pickImage: () => imgInput.click(),
       stickers: stickerPop,
       toggleRuler: () => { ruler.toggle(); tb.refresh(); },
-      toggleOptions: () => root.classList.toggle('ik-opt-open'),
+      toggleOptions: (v) => root.classList.toggle('ik-opt-open', v === undefined ? undefined : !!v),
       sticky: (c) => engine.insertSticky(c),
       library: (a) => import('./libs.js').then((m) => m.openLibrary(a, engine)),
       read: (a) => voiceRead(a, null),
@@ -263,6 +263,10 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       textSize: (v) => { if (engine.editing) engine.editing.t.style.fontSize = v + 'px'; },
     });
     engine.on('ruler', () => tb.refresh());
+    // the tool tray is tucked away until the active tool is tapped again; any tap outside closes it
+    const onTrayAway = (e) => { if (!root.classList.contains('ik-opt-open') || e.target.closest?.('.ik-options, .ik-toolbar, [data-ik-ui]')) return; root.classList.remove('ik-opt-open'); };
+    document.addEventListener('pointerdown', onTrayAway, true); cleanup.push(() => document.removeEventListener('pointerdown', onTrayAway, true));
+    engine.on('tool', () => root.classList.remove('ik-opt-open'));
     engine.on('menu', ({ anchor, items }) => menu(anchor, items, { align: 'start' }));
     cleanup.push(() => tb.destroy());
 
