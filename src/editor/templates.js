@@ -1,4 +1,6 @@
 // Paper templates, drawn in page units onto a 2D context.
+import { drawLayout } from './layouts.js';
+import { LAYOUTS } from './layoutdata.js';
 export const TEMPLATES = [
   { id: 'blank', name: 'Blank' }, { id: 'lined', name: 'Lined' }, { id: 'grid', name: 'Grid' },
   { id: 'dot', name: 'Dot grid' }, { id: 'cornell', name: 'Cornell' }, { id: 'todo', name: 'To-do' },
@@ -12,6 +14,9 @@ const lum = (hex) => {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex || ''); if (!m) return 1;
   const n = parseInt(m[1], 16); return (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
 };
+/** which layout preset a page shows: its own, else the note's when the page keeps the note's default paper */
+export const presetOf = (note, page) => page.preset || (page.bg ? null : note.preset);
+export const isDarkPaper = (paper) => lum(Array.isArray(paper) ? paper[0] : paper) < 0.45;
 export const paperOf = (note, page) => (page.paperGrad ? page.paperGrad : page.paper !== undefined ? page.paper : note.paperColor);
 export const patternOf = (note, page) => page.pattern || note.pattern || null;
 export function drawTemplate(ctx, w, h, tpl = 'blank', paper, preset, pat) {
@@ -68,4 +73,5 @@ export function drawTemplate(ctx, w, h, tpl = 'blank', paper, preset, pat) {
     }
   }
   ctx.restore();
+  const L = preset && LAYOUTS[preset]; if (L) drawLayout(ctx, w, h, L, dark);
 }

@@ -104,6 +104,7 @@ export class Engine {
   setTool(t) {
     if (this.readOnly) t = 'hand';
     if (t === this.settings.tool) return;
+    this.prevTool = this.settings.tool;
     this.buzz(6);
     this.endEdit();
     if (this.settings.tool === 'select' && t !== 'select') this.clearSelection();
@@ -187,6 +188,13 @@ export class Engine {
     return clamp(this.camPv()?.seamless ? Math.min(z, 1.3) : z, MIN_ZOOM, MAX_ZOOM);
   }
   fitWidth() { if (this.camPv() && !this.camPv().seamless) return this.fitContent(); this.fit = true; this.applyZoom(this.fitZoom()); }
+  /** smooth zoom step around the view centre */
+  zoomBy(f) {
+    const pv = this.camPv(); if (!pv) return this.setZoom(this.zoom * f);
+    this.fit = false; const c = pv.cam, [lo, hi] = pv.zoomRange(), z = clamp(c.z * f, lo, hi);
+    const cx = c.x + pv.vw / 2 / c.z, cy = c.y + pv.vh / 2 / c.z;
+    this.flyTo(pv, { x: cx - pv.vw / 2 / z, y: cy - pv.vh / 2 / z, z });
+  }
   /** canvas: frame everything on the board (or reset to the origin when empty) */
   fitContent(smooth = true) {
     const pv = this.camPv(); if (!pv) return;
@@ -672,8 +680,8 @@ export class Engine {
   }
   setTemplate(i, tpl) {
     this._structural((set) => {
-      if (i === 'all') { set(this.note, 'template', tpl); for (const p of this.note.pages) if (p.bg) set(p, 'bg', undefined); }
-      else set(this.note.pages[i], 'bg', tpl);
+      if (i === 'all') { set(this.note, 'template', tpl); for (const p of this.note.pages) { if (p.bg) set(p, 'bg', undefined); if (p.preset) set(p, 'preset', undefined); } }
+      else { set(this.note.pages[i], 'bg', tpl); if (this.note.pages[i].preset) set(this.note.pages[i], 'preset', undefined); }
     });
   }
   setPaper(color) { this.setPageStyle('all', { paper: color }); }

@@ -5,6 +5,8 @@ import { renderPdfPage } from './pdf.js';
 import { textToHtml } from './convert.js';
 import { makeZip } from './zip.js';
 import { flattenCanvas, expandPages } from '../editor/canvasmode.js';
+import { drawLayout } from '../editor/layouts.js';
+import { LAYOUTS } from '../editor/layoutdata.js';
 
 // PDF is the only export format. Importing files INTO notes is still supported.
 export { importFiles } from './import.js';
@@ -23,6 +25,11 @@ const gradStops = (g) => {
 };
 const paperOf = (page, note) => { const p = page.paper || note.paperColor; return !p || p === 'transparent' ? '#ffffff' : p; };
 
+/** ready-made page layouts (planners, ledgers...) drawn over the paper */
+export function drawPresetLayout(ctx, w, h, page, paper) {
+  const L = page.preset && LAYOUTS[page.preset]; if (!L) return false;
+  const c = parseColor(paper, [1, 1, 1]).rgb; drawLayout(ctx, w, h, L, 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2] < 0.45); return true;
+}
 export function drawTemplate(ctx, w, h, tpl, paper = '#ffffff', page = {}) {
   ctx.fillStyle = paper || '#ffffff';
   ctx.fillRect(0, 0, w, h);
@@ -179,6 +186,7 @@ export async function renderPageToCanvas(page, note, opts = {}) {
     } else {
       ctx.save(); ctx.scale(scale, scale);
       drawTemplate(ctx, W, H, page.bg || note.template || 'blank', paperOf(page, note), page);
+      drawPresetLayout(ctx, W, H, page, paperOf(page, note));
       ctx.restore();
     }
   }
@@ -547,6 +555,13 @@ export async function buildNotePdf(note, opts = {}) {
       }
     } else {
       pdfTemplate(pg, W, H, page.bg || note.template || 'blank', paperOf(page, note), L, page);
+      if (page.preset && LAYOUTS[page.preset]) { // layout templates are rasterised once per page, crisp at 3x
+        try {
+          const lc = document.createElement('canvas'); lc.width = Math.round(W * 3); lc.height = Math.round(H * 3);
+          const lx = lc.getContext('2d'); lx.scale(3, 3); drawPresetLayout(lx, W, H, page, paperOf(page, note));
+          pg.drawImage(await out.embedPng(await (await canvasBlob(lc, 'image/png')).arrayBuffer()), { x: 0, y: 0, width: W * K, height: H * K });
+        } catch (e) { console.warn('layout render failed', e); }
+      }
     }
     try { await drawPageItemsAndStrokes(out, pg, page, note, L, fonts, scale); }
     catch (e) { console.warn('page annotations failed', e); }

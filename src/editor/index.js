@@ -206,7 +206,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
     // ---------- zoom / page fabs ----------
     const zPct = h('button', { type: 'button', class: 'ik-btn zp', title: 'Fit to width', 'aria-label': 'Zoom, press to fit width', onclick: () => engine.fitWidth() }, '100%');
     const zoomBox = h('div', { class: 'ik-fab zoom' },
-      ibtn('minus', 'Zoom out (-)', () => engine.setZoom(engine.zoom / 1.2), 'sm'), zPct, ibtn('plus', 'Zoom in (+)', () => engine.setZoom(engine.zoom * 1.2), 'sm'), ibtn('fit', 'Fit width (0)', () => engine.fitWidth(), 'sm'));
+      ibtn('minus', 'Zoom out (-)', () => engine.zoomBy(1 / 1.25), 'sm'), zPct, ibtn('plus', 'Zoom in (+)', () => engine.zoomBy(1.25), 'sm'), ibtn('fit', 'Fit width (0)', () => engine.fitWidth(), 'sm'));
     const pageBtn = h('button', { type: 'button', class: 'ik-fab pg', title: 'Jump to page', 'aria-label': 'Page indicator, jump to page', onclick: () => jumpPop(pageBtn) }, '1 / 1');
     wrap.append(pageBtn, zoomBox);
     if (isCanvasNote(note)) {
@@ -225,6 +225,13 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       if (seam) engine.replacePages(toPaged(note.pages[0]), { mode: undefined });
       else { const pages = toSeamless(note); if (!pages) { toast('Notes with imported PDF pages cannot be made seamless'); return; } engine.replacePages(pages, { mode: 'seamless' }); }
       dirty = true; save(); toast(seam ? 'Now using page breaks' : 'Now seamless');
+    }
+    async function applyTemplate() {
+      const { templatePicker } = await import('../ui/dialogs.js');
+      const p = await templatePicker({ paper: note.paperColor ?? null, title: 'Apply a template to this page' });
+      if (!p) return;
+      engine.setPageStyle(engine.camPv() ? 0 : engine.cur, { preset: p.id, bg: p.base });
+      toast('Template applied: ' + p.label);
     }
     function jumpPop(anchor) {
       const inp = h('input', { type: 'number', min: 1, max: engine.pageCount(), value: engine.cur + 1, class: 'ik-jump', 'aria-label': 'Page number' });
@@ -394,6 +401,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
         { label: 'Note info', icon: 'info', run: () => setTimeout(() => infoPop(anchor), 0) },
         '-',
         { label: 'Page template / paper...', icon: 'bg', run: () => setTimeout(() => pageMenu(anchor, engine, engine.camPv() ? 0 : engine.cur), 0) },
+        { label: 'Apply a template to this page...', icon: 'layout', run: () => applyTemplate() },
         { label: 'Pages panel', icon: 'sidebar', run: () => toggleSide() },
         ...(note.mode !== 'canvas' ? [{ label: note.mode === 'seamless' ? 'Layout: switch to page breaks' : 'Layout: switch to seamless scrolling', icon: 'layout', run: () => switchLayout() }] : []),
         ...(enabled('toc') ? [{ label: 'Outline & contents', icon: 'list', run: () => setTimeout(() => outlinePop(anchor), 0) }] : []),
@@ -567,8 +575,10 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
       else if (k === ' ') { if (!engine.spaceDown) { engine.spaceDown = true; root.classList.add('ik-space'); } e.preventDefault(); }
       else if (k === 'delete' || k === 'backspace') { if (engine.selection) { e.preventDefault(); sel().delete(); } }
       else if (k === 'escape') { if (root.classList.contains('ik-focus')) toggleFocus(false); else engine.clearSelection(); closePopover(); }
-      else if (k === '+' || k === '=') engine.setZoom(engine.zoom * 1.2);
-      else if (k === '-') engine.setZoom(engine.zoom / 1.2);
+      else if (k === '+' || k === '=') engine.zoomBy(1.25);
+      else if (k === '-') engine.zoomBy(1 / 1.25);
+      else if (k === '[' || k === ']') { const c = engine.settings[engine.tool]; if (c && typeof c.size === 'number') { const v = Math.min(60, Math.max(0.5, Math.round(c.size * (k === ']' ? 1.25 : 0.8) * 2) / 2)); engine.set(engine.tool, { size: v }); toast('Size ' + v); } }
+      else if (k === 'x') engine.setTool(engine.prevTool || 'pen');
       else if (k === '0') engine.fitWidth();
       else if (k === '1' && engine.camPv()) engine.setZoom(1);
       else if (k === 'pagedown') engine.goToPage(engine.cur + 1);

@@ -9,6 +9,8 @@ import { createSidebar } from './ui/sidebar.js';
 import { createLibrary } from './ui/library.js';
 import { mountNotePage } from './ui/notePage.js';
 import { setCommands, openPalette } from './ui/palette.js';
+import { PRESETS } from './ui/templates.js';
+import { rememberPreset } from './ui/templategallery.js';
 import { newNoteDialog, notebookDialog, quickNote, shortcutsDialog } from './ui/dialogs.js';
 import { initInstallPrompt, canInstall, promptInstall } from './ui/install.js';
 import { initAppLock } from './ui/lock.js';
@@ -140,6 +142,7 @@ async function boot() {
   setCommands(() => [
     { label: 'New note', ic: 'plus', hint: 'Ctrl N', run: () => newNoteDialog() },
     { label: 'Quick note (blank, no dialog)', ic: 'zap', run: () => quickNote() },
+    ...PRESETS.map((p) => ({ label: 'New from template: ' + p.label + ' (' + p.cat + ')', ic: 'file', run: async () => { const n = await A.createNote({ preset: p.id, template: p.base }); rememberPreset(p.id); navigate('/note/' + encodeURIComponent(n.id)); } })),
     { label: "Open today's daily note", ic: 'calendar', hint: 'Ctrl D', run: daily },
     { label: 'New notebook', ic: 'folder', hint: 'Ctrl Shift N', run: () => notebookDialog() },
     { label: 'Go to All notes', ic: 'file', run: () => navigate('/') },

@@ -533,3 +533,22 @@ textarea.input { padding: 8px 12px; resize: vertical; user-select: text; }
 .empty { padding: 40px 20px; }
 
 .sb-me { gap: 10px; margin-bottom: 2px; } .sb-av { margin: 0; flex: none; } .sb-who { display: flex; flex-direction: column; min-width: 0; line-height: 1.2; } .sb-who small { color: var(--muted); font-size: .72rem; }
+
+/* ---------- template gallery ---------- */
+.tg { display: grid; gap: 12px; }
+.tg-search { width: 100%; }
+.tg-chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.tg-chips::-webkit-scrollbar { display: none; }
+.tg-chip { flex: none; min-height: 34px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-weight: 600; cursor: pointer; transition: background .15s, color .15s, border-color .15s; }
+.tg-chip:hover { color: var(--text); }
+.tg-chip.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
+.tg-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 14px 12px; max-height: min(52vh, 560px); overflow-y: auto; padding: 4px 4px 8px; margin: 0 -4px; overscroll-behavior: contain; }
+.tg-card { display: grid; gap: 6px; justify-items: center; padding: 8px 6px 10px; border: 1px solid transparent; border-radius: 14px; background: transparent; color: var(--text); cursor: pointer; text-align: center; transition: transform .18s, background .15s, border-color .15s; content-visibility: auto; contain-intrinsic-size: 150px 240px; }
+.tg-card:hover { background: var(--surface-2); transform: translateY(-2px); }
+.tg-card.sel { background: color-mix(in srgb, var(--accent) 12%, transparent); border-color: var(--accent); }
+.tg-cv { width: 100%; aspect-ratio: 820 / 1160; height: auto; border-radius: 6px; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .18), 0 6px 14px rgba(0, 0, 0, .08); }
+.tg-name { font-weight: 650; font-size: .82rem; line-height: 1.2; }
+.tg-cat { font-size: .68rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+.tg-empty { color: var(--muted); text-align: center; margin: 12px 0; }
+@media (max-width: 560px) { .tg-grid { grid-template-columns: repeat(3, 1fr); max-height: 46vh; } }
+.seg-b { min-height: 38px; }

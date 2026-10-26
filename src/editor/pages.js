@@ -1,6 +1,6 @@
 // PageView: one page = layered canvases (bg, pdf, hl, ink, live) + DOM items layer + selection overlay.
 import { h } from '../core/utils.js';
-import { drawTemplate, paperOf, patternOf } from './templates.js';
+import { drawTemplate, paperOf, patternOf, presetOf } from './templates.js';
 import { drawStroke } from './stroke.js';
 import { syncItems, clearItems } from './items.js';
 import { getImage, cachedImage } from './assets.js';
@@ -147,7 +147,7 @@ export class PageView {
       return;
     }
     if (pg.type === 'pdf') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, this.w, this.h); return; }
-    drawTemplate(ctx, this.w, this.h, pg.bg || note.template || 'lined', paperOf(note, pg), pg.bg ? null : note.preset, patternOf(note, pg));
+    drawTemplate(ctx, this.w, this.h, pg.bg || note.template || 'lined', paperOf(note, pg), presetOf(note, pg), patternOf(note, pg));
     if (pg.bgImage?.assetId) {
       const img = cachedImage(pg.bgImage.assetId) || await getImage(pg.bgImage.assetId);
       if (img && tk === this.token) { drawTemplate(ctx, this.w, this.h, 'blank', paperOf(note, pg)); drawBgImage(ctx, img, this.w, this.h, pg.bgImage.fit); }
@@ -163,7 +163,7 @@ export class PageView {
     ctx.fillStyle = Array.isArray(paper) ? paper[0] : paper && paper !== 'none' ? paper : '#fff'; ctx.fillRect(0, 0, W, pg.height); ctx.restore();
     for (let k = k0; k <= k1; k++) {
       ctx.save(); ctx.translate(0, k * H); ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip();
-      drawTemplate(ctx, W, H, tpl, paper, pg.bg ? null : note.preset, patternOf(note, pg)); ctx.restore();
+      drawTemplate(ctx, W, H, tpl, paper, presetOf(note, pg), patternOf(note, pg)); ctx.restore();
     }
     // page break guides: dashed hairline across the sheet and a small page number in the margin
     const px = 1 / c.z; ctx.save(); ctx.lineWidth = px; ctx.strokeStyle = 'rgba(79,70,229,.45)'; ctx.setLineDash([6 * px, 5 * px]);
@@ -213,7 +213,7 @@ export function paintPage(ctx, note, page, { pdfCanvas, items = true } = {}) {
   const w = page.width, hh = page.height;
   if (page.type === 'pdf') { ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, hh); if (pdfCanvas && pdfCanvas.width > 1) ctx.drawImage(pdfCanvas, 0, 0, w, hh); }
   else {
-    drawTemplate(ctx, w, hh, page.bg || note.template || 'lined', paperOf(note, page), page.bg ? null : note.preset, patternOf(note, page));
+    drawTemplate(ctx, w, hh, page.bg || note.template || 'lined', paperOf(note, page), presetOf(note, page), patternOf(note, page));
     const bi = page.bgImage && cachedImage(page.bgImage.assetId);
     if (bi) { drawTemplate(ctx, w, hh, 'blank', paperOf(note, page)); drawBgImage(ctx, bi, w, hh, page.bgImage.fit); }
   }

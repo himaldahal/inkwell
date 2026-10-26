@@ -8,17 +8,9 @@ export const TEMPLATES = [
   { id: 'cornell', label: 'Cornell', base: 'cornell' },
   { id: 'todo', label: 'To-do', base: 'todo' },
 ];
-export const PRESETS = [
-  { id: 'planner', label: 'Daily planner', base: 'lined', title: 'Daily planner', text: '<h2>Today</h2><p><strong>Top 3</strong></p><ol><li></li><li></li><li></li></ol><p><strong>Schedule</strong></p><p>Notes</p>' },
-  { id: 'weekly', label: 'Weekly plan', base: 'grid', title: 'Weekly plan', text: '<h2>Week of </h2><p>Mon / Tue / Wed / Thu / Fri / Sat / Sun</p>' },
-  { id: 'cornell', label: 'Cornell notes', base: 'cornell', title: 'Lecture notes', text: '<h2>Topic</h2><p>Date: </p>' },
-  { id: 'meeting', label: 'Meeting notes', base: 'lined', title: 'Meeting notes', text: '<h2>Meeting</h2><p><strong>Attendees:</strong> </p><p><strong>Agenda</strong></p><ul><li></li></ul><p><strong>Action items</strong></p><ul><li></li></ul>' },
-  { id: 'todo', label: 'To-do list', base: 'todo', title: 'To-do', text: '<h2>To-do</h2><ul><li></li><li></li><li></li></ul>' },
-  { id: 'staff', label: 'Music staff', base: 'lined', title: 'Sheet music', text: '' },
-  { id: 'graph', label: 'Graph paper', base: 'grid', title: 'Graph', text: '' },
-  { id: 'journal', label: 'Journal', base: 'lined', title: 'Journal', text: '<h2>Journal</h2><p>How was today?</p>' },
-  { id: 'sketch', label: 'Sketchbook', base: 'dot', title: 'Sketch', text: '' },
-];
+import { TEMPLATE_LIST, CATS } from '../editor/layoutdata.js';
+export const PRESET_CATS = CATS;
+export const PRESETS = TEMPLATE_LIST;
 export const PAPER_COLORS = [
   { v: null, label: 'White' }, { v: '#fbf6e9', label: 'Cream' }, { v: '#fff4c2', label: 'Sun' },
   { v: '#e6f0ff', label: 'Sky' }, { v: '#e5f5ea', label: 'Mint' }, { v: '#fde8ef', label: 'Rose' }, { v: '#23252f', label: 'Slate' },

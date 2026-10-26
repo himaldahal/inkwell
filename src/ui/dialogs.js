@@ -4,6 +4,7 @@ import { navigate, noteHref } from '../core/router.js';
 import { toast } from '../core/store.js';
 import { getSettings } from '../core/settings.js';
 import { TEMPLATES, PRESETS, PAPER_COLORS, NB_COLORS, NB_ICONS } from './templates.js';
+import { buildGallery, rememberPreset } from './templategallery.js';
 import * as A from './actions.js';
 import { hasUi, loadUi } from './config.js';
 import { hasLock, lockNote, removeLock } from './lock.js';
@@ -15,8 +16,12 @@ export async function newNoteDialog({ notebookId = null, preset = null } = {}) {
   const s = getSettings();
   const nbs = await A.getNotebooks();
   const st = { layout: 'paged', canvas: false, template: s.defaultTemplate || 'lined', paper: s.defaultPaper ?? null, title: '', preset: null, notebookId, text: undefined, tags: [] };
+  try { const last = JSON.parse(localStorage.getItem('ik-newnote') || 'null'); if (last) { if (['paged', 'seamless', 'canvas'].includes(last.layout)) { st.layout = last.layout; st.canvas = last.layout === 'canvas'; if (st.canvas) st.template = 'dot'; } if (last.paper !== undefined) st.paper = last.paper; } } catch { /* ignore */ }
   const grid = h('div', { class: 'tpl-grid', role: 'radiogroup', 'aria-label': 'Template' });
   const gal = h('div', { class: 'tpl-gal' });
+  const gallery = buildGallery({ paper: s.defaultPaper ?? null, onSelect: (p) => { st.preset = p.id; st.template = p.base; st.text = p.text; titleIn.placeholder = p.title; paintBase(); }, onOpen: () => createNow() });
+  gal.append(gallery.el);
+  const paintBase = () => { for (const b of grid.querySelectorAll('.tpl')) b.classList.remove('sel'); };
   const papers = h('div', { class: 'swatches', role: 'radiogroup', 'aria-label': 'Paper color' });
   const titleIn = h('input', { class: 'input', placeholder: 'Untitled', 'aria-label': 'Title', autocomplete: 'off' });
   titleIn.addEventListener('input', () => { st.title = titleIn.value; });
@@ -27,7 +32,7 @@ export async function newNoteDialog({ notebookId = null, preset = null } = {}) {
       const b = h('button', { type: 'button', class: 'tpl' + (st.template === t.id && !st.preset ? ' sel' : ''), role: 'radio', 'aria-checked': String(st.template === t.id && !st.preset), onclick: () => { st.template = t.id; st.preset = null; st.text = ''; paint(); } }, paperEl(t.id, st.paper), h('span', {}, t.label));
       return b;
     }));
-    gal.replaceChildren(...PRESETS.map((p) => h('button', { type: 'button', class: 'tpl small' + (st.preset === p.id ? ' sel' : ''), onclick: () => { st.preset = p.id; st.template = p.base; st.text = p.text; titleIn.placeholder = p.title; paint(); } }, paperEl(p.base, st.paper), h('span', {}, p.label))));
+    gallery.setPaper(st.paper); gal.hidden = st.canvas;
     papers.replaceChildren(...PAPER_COLORS.map((c) => h('button', { type: 'button', class: 'swatch' + (st.paper === c.v ? ' sel' : ''), role: 'radio', 'aria-checked': String(st.paper === c.v), 'aria-label': c.label, title: c.label, style: { background: c.v || '#fff' }, onclick: () => { st.paper = c.v; paint(); } }, st.paper === c.v ? icon('check', 14) : null)));
   };
   if (preset) { const p = PRESETS.find((x) => x.id === preset); if (p) { st.preset = p.id; st.template = p.base; st.text = p.text; titleIn.placeholder = p.title; } }
@@ -38,26 +43,40 @@ export async function newNoteDialog({ notebookId = null, preset = null } = {}) {
   };
   paintLayout();
   paint();
-  let created = null;
-  const m = openModal({
+  let created = null, m = null;
+  const doCreate = async () => {
+    created = await A.createNote({ title: st.title.trim() || undefined, template: st.template, paperColor: st.paper, notebookId: st.notebookId, preset: st.canvas ? null : st.preset, canvas: st.canvas, layout: st.layout });
+    if (!st.title.trim() && !st.preset) { created.title = ''; }
+    if (st.preset && !st.canvas) rememberPreset(st.preset);
+    try { localStorage.setItem('ik-newnote', JSON.stringify({ layout: st.layout, paper: st.paper })); } catch { /* storage unavailable */ }
+  };
+  const createNow = async () => { if (created) return; await doCreate(); m.close(); };
+  m = openModal({
     title: 'New note', size: 'lg', className: 'newnote',
     body: [
       h('label', { class: 'field-label' }, 'Title'), titleIn,
       h('label', { class: 'field-label' }, 'Layout'), layoutSeg,
       h('label', { class: 'field-label' }, 'Page style'), grid,
-      h('label', { class: 'field-label' }, 'Template gallery'), gal,
+      h('label', { class: 'field-label' }, 'Templates (double-click one to create instantly)'), gal,
       h('div', { class: 'row-2' }, h('div', {}, h('label', { class: 'field-label' }, 'Paper'), papers), h('div', {}, h('label', { class: 'field-label' }, 'Notebook'), nbSel)),
     ],
     actions: [{ label: 'Cancel', kind: 'ghost' }, {
-      label: 'Create note', kind: 'primary', onClick: async () => {
-        created = await A.createNote({ title: st.title.trim() || undefined, template: st.template, paperColor: st.paper, notebookId: st.notebookId, preset: st.canvas ? null : st.preset, canvas: st.canvas, layout: st.layout });
-        if (!st.title.trim() && !st.preset) { created.title = ''; }
-      },
+      label: 'Create note', kind: 'primary', onClick: async () => { if (!created) await doCreate(); },
     }],
   });
   await m.closed;
   if (created) navigate('/note/' + encodeURIComponent(created.id));
   return created;
+}
+/** modal template chooser; resolves to the chosen preset or null */
+export async function templatePicker({ paper = null, title = 'Choose a template' } = {}) {
+  let pick = null, m = null;
+  const g = buildGallery({ paper, onSelect: (p) => { pick = p; }, onOpen: (p) => { pick = p; m.close('ok'); } });
+  m = openModal({ title, size: 'lg', body: [g.el], actions: [{ label: 'Cancel', kind: 'ghost' }, { label: 'Use template', kind: 'primary', value: 'ok' }] });
+  setTimeout(() => g.focusSearch(), 60);
+  const r = await m.closed;
+  if (r === 'ok' && pick) { rememberPreset(pick.id); return pick; }
+  return null;
 }
 export async function quickNote(opts = {}) {
   const n = await A.createNote(opts);

@@ -56,7 +56,7 @@ export function createMinimap(engine) {
     ctx.drawImage(cache, 0, 0, W, H);
     const rx = v.x0 * t.k + t.ox, ry = v.y0 * t.k + t.oy, rw = (v.x1 - v.x0) * t.k, rh = (v.y1 - v.y0) * t.k;
     ctx.fillStyle = 'rgba(79,70,229,.10)'; ctx.strokeStyle = 'rgba(79,70,229,.95)'; ctx.lineWidth = 1.5;
-    ctx.beginPath(); ctx.roundRect(rx, ry, rw, rh, 3); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(rx, ry, rw, rh, 3); else ctx.rect(rx, ry, rw, rh); ctx.fill(); ctx.stroke();
   }
   const schedule = () => { if (!raf) raf = requestAnimationFrame(paint); };
 

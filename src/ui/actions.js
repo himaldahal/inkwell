@@ -31,7 +31,7 @@ export async function createNote(opts = {}) {
     note.mode = 'canvas';
     Object.assign(note.pages[0], { canvas: true, bg: ['dot', 'grid', 'lined', 'blank'].includes(tpl) ? tpl : 'dot' });
   }
-  if (preset) note.preset = preset.id;
+  if (preset) { note.preset = preset.id; note.pages[0].preset = preset.id; }
   await putRecord('notes', note);
   return note;
 }
