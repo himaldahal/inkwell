@@ -8,7 +8,8 @@ import { cloneStroke, bboxOf, tomb, alive, drawStroke, getAuthor } from './strok
 import { withData } from './items.js';
 import { seedUrl } from './assets.js';
 import { icon } from './icons.js';
-import { getSetting } from '../core/settings.js';
+import { getSetting, setSetting } from '../core/settings.js';
+import { quantile, median, jitterOf, smoothFromJitter } from './calib.js';
 import { enabled } from './mods.js';
 import { fixBindings } from './connectors.js';
 import { pref, clamp } from './ui.js';
@@ -20,7 +21,7 @@ import { createShapeTool } from './tools/shape.js';
 import { createLaserTool } from './tools/laser.js';
 import { CAM_MIN, CAM_MAX, contentBounds, isCamNote, sheetPages, pageH } from './canvasmode.js';
 
-export const MIN_ZOOM = 0.3, MAX_ZOOM = 4;
+export const MIN_ZOOM = 0.25, MAX_ZOOM = 6;
 const lazy = (f) => { let p; return () => (p ||= f().catch((e) => { console.warn('optional module unavailable', e); return null; })); };
 
 const DEFAULTS = {
@@ -77,6 +78,9 @@ export class Engine {
     p.palm = g('editor.palmRejection', 'auto'); p.input = g('editor.inputMode', 'any'); p.smoothing = g('editor.smoothing', 0) / 100 * 0.85;
     p.curve = { soft: 0.7, normal: 1, firm: 1.5 }[g('editor.pressureCurve', 'normal')] || 1;
     p.zoom = g('editor.zoom', 'pinch'); p.autoScroll = g('editor.autoScroll', true) !== false; p.twoFinger = g('editor.twoFinger', 'pan-zoom');
+    p.smoothingManual = g('editor.smoothing', 40); p.smoothAuto = g('editor.smoothingAuto', true) !== false; p.autoCal = g('editor.autoCalibrate', true) !== false;
+    p.calib = g('editor.calib', null); p.pred = g('editor.prediction', true) !== false; p.zoomSpeed = g('editor.zoomSpeed', 100) / 100; p.momentum = g('editor.momentum', true) !== false;
+    p.smartZoom = g('editor.smartZoom', true) !== false; p.snapDelay = g('editor.snapDelay', 520);
     p.haptics = g('editor.haptics', true) !== false; p.autoHide = !!g('editor.toolbarAutoHide', false); p.horiz = g('editor.scrollDir', 'vertical') === 'horizontal';
     const R = this.root;
     R.dataset.tbpos = g('editor.toolbarPos', 'top'); R.classList.toggle('ik-left', !!g('editor.leftHanded', false));
@@ -86,6 +90,30 @@ export class Engine {
     if (p.zoom === 'fit-width' && !this._fitSet) { this._fitSet = true; this.fit = true; }
   }
   enabled(n) { return enabled(n); }
+  /** smoothing 0..1 for an input type: learned per device when automatic, else the manual slider */
+  smoothingFor(type) {
+    const p = this.prefs;
+    if (!p.smoothAuto) return (p.smoothingManual ?? 40) / 100;
+    return (p.calib?.smoothBy?.[type] ?? { pen: 22, touch: 45, mouse: 38 }[type] ?? 40) / 100;
+  }
+  /** stretch the pen's real pressure range (found by calibration) over 0..1 */
+  pressure(p, type) {
+    const c = this.prefs.calib;
+    if (type !== 'pen' || !c || c.pmax == null || c.pmax - (c.pmin || 0) < 0.1) return p;
+    return clamp((p - (c.pmin || 0)) / (c.pmax - c.pmin), 0, 1);
+  }
+  /** passive calibration: every finished stroke refines the pressure range and the steadiness of that input */
+  learnStroke(type, xy, ps) {
+    if (!this.prefs.autoCal || xy.length < 36) return;
+    const st = this._cal ||= { lo: [], hi: [], n: 0, jit: { ...(this.prefs.calib?.jitter && typeof this.prefs.calib.jitter === 'object' ? this.prefs.calib.jitter : {}) } };
+    if (type === 'pen' && ps.length >= 12) { const s = ps.filter((v) => v > 0).sort((a, b) => a - b); if (s.length >= 12) { st.lo.push(quantile(s, 0.05)); st.hi.push(quantile(s, 0.95)); if (st.lo.length > 40) { st.lo.shift(); st.hi.shift(); } } }
+    const j = jitterOf(xy); if (j != null) st.jit[type] = st.jit[type] == null ? j : st.jit[type] * 0.85 + j * 0.15;
+    if (++st.n % 6) return;
+    const old = this.prefs.calib || {}, next = { ...old, at: Date.now(), jitter: { ...st.jit }, smoothBy: { ...(old.smoothBy || {}) } };
+    for (const t in st.jit) if (st.jit[t] != null) next.smoothBy[t] = smoothFromJitter(st.jit[t]);
+    if (st.lo.length >= 6) { const lo = median(st.lo), hi = median(st.hi); if (hi - lo >= 0.12) { next.pmin = +lo.toFixed(3); next.pmax = +hi.toFixed(3); } else { next.pmin = 0; next.pmax = 1; } }
+    this.prefs.calib = next; setSetting('editor.calib', next).catch(() => {});
+  }
   snapV(v) { return this.grid ? Math.round(v / 20) * 20 : v; }
   buzz(ms = 6) { if (this.prefs.haptics !== false) navigator.vibrate?.(ms); }
 
@@ -188,9 +216,33 @@ export class Engine {
     return clamp(this.camPv()?.seamless ? Math.min(z, 1.3) : z, MIN_ZOOM, MAX_ZOOM);
   }
   fitWidth() { if (this.camPv() && !this.camPv().seamless) return this.fitContent(); this.fit = true; this.applyZoom(this.fitZoom()); }
+  /** animated zoom to an absolute level around a screen point (view centre when omitted) */
+  zoomTo(z, ax, ay, ms = 240) {
+    const cp = this.camPv();
+    if (cp) {
+      this.fit = false; z = clamp(z, ...cp.zoomRange()); const r = cp.el.getBoundingClientRect(), c = cp.cam;
+      const sx = ax == null ? cp.vw / 2 : ax - r.left, sy = ay == null ? cp.vh / 2 : ay - r.top, wx = c.x + sx / c.z, wy = c.y + sy / c.z;
+      return this.flyTo(cp, { x: wx - sx / z, y: wy - sy / z, z });
+    }
+    z = clamp(z, MIN_ZOOM, MAX_ZOOM); this.fit = false; cancelAnimationFrame(this._zanim);
+    const z0 = this.zoom, t0 = performance.now(), anchor = ax == null ? null : { x: ax, y: ay };
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / ms), e = 1 - Math.pow(1 - k, 3);
+      this.applyZoom(Math.exp(Math.log(z0) + (Math.log(z) - Math.log(z0)) * e), anchor);
+      if (k < 1) this._zanim = requestAnimationFrame(step);
+    };
+    this._zanim = requestAnimationFrame(step);
+  }
+  /** double-tap: jump between "fit" and a comfortable close-up under the finger */
+  _smartZoom(x, y) {
+    const cp = this.camPv();
+    if (cp) { if (cp.seamless) { const fit = this.fitZoom(); return cp.cam.z > fit * 1.25 ? (this.fit = true, this.zoomTo(fit)) : this.zoomTo(fit * 1.9, x, y); } return cp.cam.z > 1.3 || cp.cam.z < 0.7 ? this.fitContent() : this.zoomTo(2.2, x, y); }
+    const fit = this.fitZoom();
+    if (this.zoom > fit * 1.25) { this.fit = true; this.zoomTo(fit, x, y); } else this.zoomTo(fit * 2, x, y);
+  }
   /** smooth zoom step around the view centre */
   zoomBy(f) {
-    const pv = this.camPv(); if (!pv) return this.setZoom(this.zoom * f);
+    const pv = this.camPv(); if (!pv) return this.zoomTo(this.zoom * f);
     this.fit = false; const c = pv.cam, [lo, hi] = pv.zoomRange(), z = clamp(c.z * f, lo, hi);
     const cx = c.x + pv.vw / 2 / c.z, cy = c.y + pv.vh / 2 / c.z;
     this.flyTo(pv, { x: cx - pv.vw / 2 / z, y: cy - pv.vh / 2 / z, z });
@@ -206,7 +258,7 @@ export class Engine {
   }
   /** animate the camera to {x, y, z} */
   flyTo(pv, to, smooth = true) {
-    cancelAnimationFrame(this._fly);
+    cancelAnimationFrame(this._fly); cancelAnimationFrame(this._flingRaf);
     const cam = pv.cam, from = { x: cam.x, y: cam.y, z: cam.z }, t0 = performance.now(), D = smooth ? 320 : 0;
     const step = (now) => {
       const k = D ? Math.min(1, (now - t0) / D) : 1, e = 1 - Math.pow(1 - k, 3);
@@ -750,8 +802,12 @@ export class Engine {
         e.preventDefault(); const k = e.deltaMode === 1 ? 16 : 1; // trackpad / wheel scrolling pans the board
         this._panBy(e.shiftKey && !e.deltaX ? -e.deltaY * k : -e.deltaX * k, e.shiftKey && !e.deltaX ? 0 : -e.deltaY * k); return;
       }
-      e.preventDefault(); if (this.prefs.zoom !== 'locked') this.setZoom(this.zoom * Math.exp(-e.deltaY * (this.camPv() ? 0.0032 : 0.0022)), e.clientX, e.clientY);
+      e.preventDefault(); if (this.prefs.zoom !== 'locked') this.setZoom(this.zoom * Math.exp(-e.deltaY * (this.camPv() ? 0.0032 : 0.0022) * (this.prefs.zoomSpeed || 1)), e.clientX, e.clientY);
     }, { passive: false });
+    // Safari: trackpad pinch (and iOS two-finger pinch) arrive as gesture events instead of ctrl+wheel
+    on(s, 'gesturestart', (e) => { e.preventDefault(); if (this.mode === 'gesture' || this.touches.size || this.mode === 'tool') return; this._gOn = true; this._g0 = this.zoom; }, { passive: false });
+    on(s, 'gesturechange', (e) => { if (!this._gOn) return; e.preventDefault(); if (this.prefs.zoom !== 'locked') this.setZoom(this._g0 * (1 + (e.scale - 1) * (this.prefs.zoomSpeed || 1)), e.clientX, e.clientY); }, { passive: false });
+    on(s, 'gestureend', (e) => { if (this._gOn) { e.preventDefault(); this._gOn = false; } }, { passive: false });
     on(s, 'scroll', throttle(() => { this.updateCurrent(); this.renderSelection(); }, 80), { passive: true });
     on(document, 'keyup', (e) => { if (e.key === ' ') { this.spaceDown = false; this.root.classList.remove('ik-space'); } });
   }
@@ -823,10 +879,10 @@ export class Engine {
       t.x = e.clientX; t.y = e.clientY;
       if (this.mode === 'gesture') { this._gestureMove(); e.preventDefault(); return; }
       if (this.mode === 'three') { this.three.d = [...this.touches.values()].reduce((a, q) => a + q.x, 0) / this.touches.size - this.three.x; return; }
-      if (this.mode === 'pan') { this._panBy(dx, dy); return; }
+      if (this.mode === 'pan') { this._panBy(dx, dy); this._trackMove(dx, dy); return; }
     }
     if (this.mode === 'pan' && e.pointerId === this.panId) {
-      this._panBy(e.clientX - this.panLast.x, e.clientY - this.panLast.y);
+      this._trackMove(e.clientX - this.panLast.x, e.clientY - this.panLast.y); this._panBy(e.clientX - this.panLast.x, e.clientY - this.panLast.y);
       this.panLast = { x: e.clientX, y: e.clientY }; return;
     }
     if (this.mode === 'tool' && e.pointerId === this.activeId) {
@@ -834,7 +890,7 @@ export class Engine {
       this.lastClient = { x: e.clientX, y: e.clientY };
       const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
       for (const c of evs.length ? evs : [e]) tl.move?.(this._mk(c, pv));
-      if (tl.predict) {
+      if (tl.predict && this.prefs.pred) {
         const pr = e.getPredictedEvents ? e.getPredictedEvents() : [];
         tl.predict(pr.map((c) => this._mk(c, pv)));
       }
@@ -852,7 +908,7 @@ export class Engine {
       if (this.mode === 'gesture') {
         if (this.touches.size < 2) {
           const g = this.gesture;
-          if (!cancel && g && !g.moved && performance.now() - g.t0 < 380) this.undo();
+          if (!cancel && g && !g.moved && performance.now() - g.t0 < 380) this.undo(); else if (g?.moved) this._fling();
           this.mode = this.touches.size ? 'gesture-end' : null; this.gesture = null;
         }
         return;
@@ -862,9 +918,9 @@ export class Engine {
         return;
       }
       if (this.mode === 'gesture-end') { if (!this.touches.size) this.mode = null; return; }
-      if (this.mode === 'pan') { this.mode = null; return; }
+      if (this.mode === 'pan') { this._endPan(e); return; }
     }
-    if (this.mode === 'pan' && e.pointerId === this.panId) { this.mode = null; this.root.classList.remove('ik-panning'); return; }
+    if (this.mode === 'pan' && e.pointerId === this.panId) { this.root.classList.remove('ik-panning'); this._endPan(e); return; }
     if (this.mode === 'tool' && e.pointerId === this.activeId) {
       const tl = this.tools[this._tool()], pv = this.activePv;
       this.mode = null; this.activeId = null; this._autoscrollStop();
@@ -873,7 +929,31 @@ export class Engine {
       for (const pv of this.pvs) if (pv._dirtyInk) { pv._dirtyInk = false; pv.renderInk(); }
     }
   }
+  /** pan finished: remember a short tap (for double-tap zoom) or let the content glide on */
+  _endPan(e) {
+    this.mode = null; const s = this._panStart;
+    if (s && performance.now() - s.t < 260 && Math.hypot(e.clientX - s.x, e.clientY - s.y) < 8) { this._lastTap = { t: performance.now(), x: e.clientX, y: e.clientY }; this._vel = null; }
+    else this._fling();
+  }
+  _trackMove(dx, dy) {
+    const t = performance.now(), v = this._vel || (this._vel = { x: 0, y: 0, t }), dt = Math.max(1, t - v.t);
+    v.x = v.x * 0.55 + (dx / dt) * 0.45; v.y = v.y * 0.55 + (dy / dt) * 0.45; v.t = t;
+  }
+  _fling() {
+    const v = this._vel; this._vel = null;
+    if (!this.prefs.momentum || !v || performance.now() - v.t > 80 || Math.hypot(v.x, v.y) < 0.25) return;
+    let last = performance.now(), vx = v.x, vy = v.y;
+    const step = (now) => {
+      const dt = Math.min(40, now - last); last = now; const k = Math.exp(-dt / 330); vx *= k; vy *= k;
+      this._panBy(vx * dt, vy * dt);
+      if (Math.hypot(vx, vy) > 0.03 && this.mode !== 'pan' && this.mode !== 'tool' && this.mode !== 'gesture') this._flingRaf = requestAnimationFrame(step);
+    };
+    this._flingRaf = requestAnimationFrame(step);
+  }
   _startPan(e) {
+    cancelAnimationFrame(this._flingRaf); this._vel = null; this._panStart = { x: e.clientX, y: e.clientY, t: performance.now() };
+    const lt = this._lastTap;
+    if (this.prefs.smartZoom && lt && performance.now() - lt.t < 330 && Math.hypot(e.clientX - lt.x, e.clientY - lt.y) < 28 && this.tool === 'hand') { this._lastTap = null; this._smartZoom(e.clientX, e.clientY); return; }
     this.mode = 'pan'; this.panId = e.pointerId; this.panLast = { x: e.clientX, y: e.clientY };
     try { this.scroll.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     this.root.classList.add('ik-panning');
@@ -890,7 +970,7 @@ export class Engine {
     const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2, d = Math.hypot(a.x - b.x, a.y - b.y);
     if (!g.moved && (Math.hypot(a.x - a.sx, a.y - a.sy) > 14 || Math.hypot(b.x - b.sx, b.y - b.sy) > 14)) g.moved = true;
     if (!g.moved || this.prefs.twoFinger === 'undo') return;
-    this._panBy(cx - g.cx, cy - g.cy);
+    this._trackMove(cx - g.cx, cy - g.cy); this._panBy(cx - g.cx, cy - g.cy);
     if (g.d > 10 && d > 10 && this.prefs.zoom !== 'locked') this.setZoom(this.zoom * (d / g.d), cx, cy);
     g.cx = cx; g.cy = cy; g.d = d;
   }

@@ -406,6 +406,7 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
         '-',
         { label: 'Page template / paper...', icon: 'bg', run: () => setTimeout(() => pageMenu(anchor, engine, engine.camPv() ? 0 : engine.cur), 0) },
         { label: 'Apply a template to this page...', icon: 'layout', run: () => applyTemplate() },
+        { label: 'Pen & touch settings...', icon: 'sliders', run: () => import('../ui/calibrate.js').then((m) => m.openPenSettings()) },
         { label: 'Pages panel', icon: 'sidebar', run: () => toggleSide() },
         ...(note.mode !== 'canvas' ? [{ label: note.mode === 'seamless' ? 'Layout: switch to page breaks' : 'Layout: switch to seamless scrolling', icon: 'layout', run: () => switchLayout() }] : []),
         ...(enabled('toc') ? [{ label: 'Outline & contents', icon: 'list', run: () => setTimeout(() => outlinePop(anchor), 0) }] : []),

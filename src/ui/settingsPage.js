@@ -7,6 +7,7 @@ import { createInstallButton } from './install.js';
 import { createSyncPill } from './syncStatus.js';
 import { appLockEnabled, setAppLock } from './lock.js';
 import { mountSyncSettings } from './syncSettings.js';
+import { openCalibration, calibrationSummary } from './calibrate.js';
 import { getConfig } from './config.js';
 import { SECTIONS, RESETTABLE, SHORTCUT_DEFAULTS, SHORTCUT_LABELS, comboOf, prettyCombo } from './settingsSchema.js';
 import { getNotebooks } from './actions.js';
@@ -120,6 +121,11 @@ export function mountSettings(container) {
       case 'info': return row(it.label, it.text, h('span', {}));
       case 'sync': { if (!mounted) { mounted = true; try { mountSyncSettings(syncMount); } catch (e) { syncMount.textContent = 'Sync settings are unavailable.'; } } syncMount.dataset.s = 'sync account sign in server'; return syncMount; }
       case 'applock': return row('App passcode', 'Ask for a passcode when Inkwell opens or returns from the background', h('label', { class: 'switch' }, h('input', { type: 'checkbox', checked: appLockEnabled(), onchange: async (e) => { if (!(await setAppLock(e.target.checked))) e.target.checked = !e.target.checked; } }), h('span', {})));
+      case 'calibrate': {
+        const sum = h('small', {}, calibrationSummary());
+        return h('div', { class: 'set-row', 'data-s': 'calibrate calibration pen pencil touch pressure smoothing auto' }, h('div', { class: 'set-lab' }, h('b', {}, 'Calibrate pen & touch'), sum),
+          h('div', { class: 'btn-row' }, btn('Calibrate...', () => { openCalibration().closed.then(() => { sum.textContent = calibrationSummary(); }); }, 'primary'), btn('Reset', async () => { await set('editor.calib', null); sum.textContent = calibrationSummary(); toast('Calibration reset'); })));
+      }
       case 'clearcache': return row('Local cache', 'Remove cached files (notes are kept)', btn('Clear cache', clearCaches, 'sm'));
       case 'devices': return devicesBlock();
       case 'storage': return storageBlock();

@@ -5,8 +5,11 @@ const alpha = (cutoff, dt) => 1 / (1 + 1 / (TAU * cutoff * dt));
 // pen = Apple Pencil / stylus (already clean, high rate); touch and mouse are noisier
 const PROFILE = { pen: { min: 3.4, beta: 0.05 }, touch: { min: 1.5, beta: 0.035 }, mouse: { min: 1.3, beta: 0.03 } };
 
-export function createInkFilter(type = 'mouse') {
-  const P = PROFILE[type] || PROFILE.mouse;
+/** user smoothing 0..1 (0.4 = the default feel) -> multiplier on the filter cut-off: lower = smoother */
+export const strengthFactor = (s01) => Math.pow(3, (0.4 - Math.min(1, Math.max(0, s01))) * 2.5);
+
+export function createInkFilter(type = 'mouse', s01 = 0.4) {
+  const B = PROFILE[type] || PROFILE.mouse, k = strengthFactor(s01), P = { min: B.min * k, beta: B.beta * k };
   let x = 0, y = 0, dx = 0, dy = 0, t = 0, started = false;
   return {
     reset(px, py, pt) { x = px; y = py; dx = dy = 0; t = pt || 0; started = true; },

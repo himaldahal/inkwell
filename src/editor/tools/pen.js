@@ -5,7 +5,7 @@ import { drawSegment, drawDot, drawPath, drawStroke, recognizeShape, shapePts, w
 
 export function createPenTool(engine, kind) {
   let s = null, pv = null, ink = null, live = null, drawn = 0, snapped = false, latched = false;
-  let flt = null, pm = false, curve = 1, timer = 0, anchor = null, predBox = null, lastP = 0.5, stab = 0;
+  let flt = null, rawXY = [], rawP = [], ptype = 'mouse', pm = false, curve = 1, timer = 0, anchor = null, predBox = null, lastP = 0.5, stab = 0;
   const cfg = () => engine.settings[kind];
   const clearPred = () => {
     if (!predBox || !live) return;
@@ -35,8 +35,9 @@ export function createPenTool(engine, kind) {
       if (kind === 'highlighter' && c.chisel) s.chisel = true;
       if (c.taper != null && kind === 'pen') s.taper = c.taper;
       if (kind === 'pen' && c.brush && c.brush !== 'fine') s.brush = c.brush;
-      stab = c.stab ?? engine.prefs.smoothing ?? 0;
-      flt = createInkFilter(pt.type === 'pen' ? 'pen' : pt.type === 'touch' ? 'touch' : 'mouse'); flt.reset(pt.x, pt.y, pt.t);
+      stab = c.stab ?? 0; ptype = pt.type === 'pen' ? 'pen' : pt.type === 'touch' ? 'touch' : 'mouse';
+      rawXY = [pt.cx, pt.cy, pt.t]; rawP = [pt.p]; pt.p = engine.pressure(pt.p, ptype); s.pts[2] = pt.p;
+      flt = createInkFilter(ptype, engine.smoothingFor(ptype)); flt.reset(pt.x, pt.y, pt.t);
       lastP = pt.p; snapped = false; drawn = 0; predBox = null;
       ink = pv.ctx('ink'); live = pv.ctx('live');
       anchor = pt;
@@ -52,6 +53,7 @@ export function createPenTool(engine, kind) {
         return;
       }
       if (latched || engine.ruler?.on) { pt.latched = latched; engine.applyRuler(pt); }
+      rawXY.push(pt.cx, pt.cy, pt.t); rawP.push(pt.p); pt.p = engine.pressure(pt.p, ptype);
       if (!latched && !engine.ruler?.on && flt) { const q = flt.step(pt.x, pt.y, pt.t, engine.zoom); pt.x = q.x; pt.y = q.y; }
       const n = s.pts.length;
       if (stab > 0) { pt.x = s.pts[n - 3] + (pt.x - s.pts[n - 3]) * (1 - stab); pt.y = s.pts[n - 2] + (pt.y - s.pts[n - 2]) * (1 - stab); }
@@ -65,7 +67,7 @@ export function createPenTool(engine, kind) {
       else { while (drawn <= m - 2) drawSegment(ink, s, drawn++); }
       if (Math.hypot(pt.cx - anchor.cx, pt.cy - anchor.cy) > 5) {
         anchor = pt; clearTimeout(timer);
-        if (cfg().snap && kind !== 'pencil' && !latched) timer = setTimeout(snapShape, 520);
+        if (cfg().snap && kind !== 'pencil' && !latched) timer = setTimeout(snapShape, engine.prefs.snapDelay || 520);
       }
     },
     predict(ps) {
@@ -100,6 +102,7 @@ export function createPenTool(engine, kind) {
       engine.addStroke(pv, st, hl);
       if (hl) finishLive();
       engine.useColor(st.color);
+      engine.learnStroke(ptype, rawXY, rawP);
     },
     cancel() { if (!s) return; s = null; finishLive(); pv.renderInk(); },
   };
