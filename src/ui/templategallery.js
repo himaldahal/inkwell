@@ -28,7 +28,8 @@ export function buildGallery({ paper = null, selected = null, onSelect, onOpen }
     const c = cv.getContext('2d'); c.setTransform((w * dpr) / W, 0, 0, (hh * dpr) / H, 0, 0);
     drawTemplate(c, W, H, p.base, pap || '#ffffff', p.ops || ['planner', 'weekly', 'staff', 'graph'].includes(p.id) ? p.id : null);
   }
-  const matches = (p) => (cat === 'All' || (cat === 'Recent' ? recentPresets().includes(p.id) : p.cat === cat)) && (!q || (p.label + ' ' + p.cat + ' ' + p.id).toLowerCase().includes(q));
+  // a search looks through every category; the chips only filter while the box is empty
+  const matches = (p) => (q ? (p.label + ' ' + p.cat + ' ' + p.id).toLowerCase().includes(q) : cat === 'All' || (cat === 'Recent' ? recentPresets().includes(p.id) : p.cat === cat));
   function order() {
     const rec = recentPresets();
     return cat === 'Recent' ? rec.map((id) => PRESETS.find((p) => p.id === id)).filter(Boolean) : PRESETS;

@@ -76,7 +76,8 @@ export function mountEditor(container, noteId, { onClose, onPresence, readOnly =
     const engine = new Engine({ note, root, scroll, pagesEl, wrap, readOnly });
     eng = engine; if (readOnly) root.classList.add('ik-readonly');
     engine.onLocalOp((ops) => opCbs.forEach((cb) => { try { cb(ops); } catch (e) { console.error(e); } }));
-    engine.onLocalPresence((m) => { presCbs.forEach((cb) => cb(m)); try { onPresence?.(m); } catch (e) { console.error(e); } });
+    engine.onLocalPresence((m) => { presCbs.forEach((cb) => cb(m)); });
+    void onPresence;
     pendingOps.splice(0).forEach((o) => engine.applyRemoteOps(o));
     if (lastPeers.length) engine.setPresence(lastPeers);
     engine.cursorEl = cursorEl;

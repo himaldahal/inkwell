@@ -559,3 +559,5 @@ textarea.input { padding: 8px 12px; resize: vertical; user-select: text; }
 .cal-slide { display: flex; align-items: center; gap: 12px; } .cal-slide label { font-weight: 600; white-space: nowrap; } .cal-range { flex: 1; accent-color: var(--accent); } .cal-slide output { min-width: 40px; text-align: right; font-variant-numeric: tabular-nums; }
 .cal-out { display: grid; gap: 6px; margin-top: 12px; }
 .cal-row { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; border-radius: 10px; background: var(--surface-2); font-size: .9rem; } .cal-row span { color: var(--muted); } .cal-row b { text-align: right; }
+.tg-wrap { display: block; min-width: 0; }
+.tg-search { min-height: 44px; }

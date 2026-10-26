@@ -76,7 +76,7 @@ export function mountSidebar(host, engine) {
   }
   function build() {
     io.disconnect(); list.replaceChildren(); items.length = 0;
-    add.hidden = seamless();
+    add.hidden = !!engine.camPv();
     const seam = seamless(), count = seam ? engine.pageCount() : engine.note.pages.length;
     Array.from({ length: count }).forEach((_, i) => {
       const cv = h('canvas', { class: 'ik-thumb-cv' });

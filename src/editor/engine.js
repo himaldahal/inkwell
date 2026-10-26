@@ -118,7 +118,7 @@ export class Engine {
   buzz(ms = 6) { if (this.prefs.haptics !== false) navigator.vibrate?.(ms); }
 
   // ---- events ----
-  on(evt, fn) { (this.listeners[evt] ||= new Set()).add(fn); return () => this.listeners[evt].delete(fn); }
+  on(evt, fn) { (this.listeners[evt] ||= new Set()).add(fn); return () => this.listeners?.[evt]?.delete(fn); }
   emit(evt, d) { this.listeners[evt]?.forEach((f) => { try { f(d); } catch (e) { console.error(e); } }); }
   changed(pv, kind) {
     if (pv?.seamless && pv.fitSheet()) { pv.redraw(); this.emit('sheet', pv); this._camMoved(pv); }

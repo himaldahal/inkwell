@@ -18,7 +18,7 @@ export async function newNoteDialog({ notebookId = null, preset = null } = {}) {
   const st = { layout: 'paged', canvas: false, template: s.defaultTemplate || 'lined', paper: s.defaultPaper ?? null, title: '', preset: null, notebookId, text: undefined, tags: [] };
   try { const last = JSON.parse(localStorage.getItem('ik-newnote') || 'null'); if (last) { if (['paged', 'seamless', 'canvas'].includes(last.layout)) { st.layout = last.layout; st.canvas = last.layout === 'canvas'; if (st.canvas) st.template = 'dot'; } if (last.paper !== undefined) st.paper = last.paper; } } catch { /* ignore */ }
   const grid = h('div', { class: 'tpl-grid', role: 'radiogroup', 'aria-label': 'Template' });
-  const gal = h('div', { class: 'tpl-gal' });
+  const gal = h('div', { class: 'tg-wrap' });
   const gallery = buildGallery({ paper: s.defaultPaper ?? null, onSelect: (p) => { st.preset = p.id; st.template = p.base; st.text = p.text; titleIn.placeholder = p.title; paintBase(); }, onOpen: () => createNow() });
   gal.append(gallery.el);
   const paintBase = () => { for (const b of grid.querySelectorAll('.tpl')) b.classList.remove('sel'); };

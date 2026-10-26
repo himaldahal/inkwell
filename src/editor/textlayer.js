@@ -58,7 +58,7 @@ export function mountTextLayer(host, note, { onChange, hooks = {} }) {
   function stats() {
     const s = sel(), txt = ed.innerText || '', w = words(txt);
     const part = s && !s.isCollapsed && inEditor() ? words(String(s)) : 0;
-    stat.textContent = part ? `${part} of ${w.toLocaleString()} words selected` : `${w.toLocaleString()} word${w === 1 ? '' : 's'}  ·  ${Math.max(1, Math.round(w / 230))} min read  ·  ${txt.replace(/\s/g, '').length.toLocaleString()} characters`;
+    stat.textContent = part ? `${part} of ${w.toLocaleString()} words selected` : `${w.toLocaleString()} word${w === 1 ? '' : 's'}  ·  ${Math.max(1, Math.round(w / 230))} min read  ·  ${txt.replace(/[\s\u200b]/g, '').length.toLocaleString()} characters`;
     if (!w && !part) stat.textContent = 'Nothing written yet';
   }
   const typoBtn = h('button', { type: 'button', class: 'ik-foot-btn', title: 'Typography and width', 'aria-label': 'Typography and width' }, 'Aa');
@@ -78,7 +78,7 @@ export function mountTextLayer(host, note, { onChange, hooks = {} }) {
   const foot = h('div', { class: 'ik-textfoot' }, stat, h('span', { class: 'ik-foot-sp' }), saved, twBtn, typoBtn);
 
   // ---------- core sync ----------
-  const sync = () => { note.text = ed.innerHTML === '<br>' ? '' : ed.innerHTML; onChange?.(); refresh(); stats(); markSaved(); };
+  const sync = () => { const html = ed.innerHTML.replace(/\u200b/g, ''); note.text = html === '<br>' ? '' : html; onChange?.(); refresh(); stats(); markSaved(); };
   const btns = [];
   const mk = (ic, label, fn, state, txt, cls = '') => {
     const b = h('button', { type: 'button', class: 'ik-btn sm ' + cls, title: label, 'aria-label': label });
@@ -193,10 +193,11 @@ export function mountTextLayer(host, note, { onChange, hooks = {} }) {
     for (const [re, tag, guard] of INLINE) {
       const m = re.exec(before); if (!m) continue;
       if (guard && m.index > 0 && /[\w*]/.test(before[m.index - 1])) continue; // snake_case or **x* stays as typed
-      const r = document.createRange(); r.setStart(node, m.index); r.setEnd(node, off); s.removeAllRanges(); s.addRange(r);
-      document.execCommand('insertHTML', false, `<${tag}>${esc(m[2])}</${tag}>`);
-      const el = anchorEl()?.closest?.(tag);
-      if (el && ed.contains(el)) { const r2 = document.createRange(); r2.setStartAfter(el); r2.collapse(true); s.removeAllRanges(); s.addRange(r2); }
+      // built with the DOM (not execCommand) so the new format never leaks into what is typed next
+      const r = document.createRange(); r.setStart(node, m.index); r.setEnd(node, off); r.deleteContents();
+      const el = document.createElement(tag); el.textContent = m[2]; r.insertNode(el);
+      const z = document.createTextNode('\u200b'); el.after(z);
+      const r2 = document.createRange(); r2.setStart(z, 1); r2.collapse(true); s.removeAllRanges(); s.addRange(r2);
       return true;
     }
     return false;
@@ -259,6 +260,12 @@ export function mountTextLayer(host, note, { onChange, hooks = {} }) {
   }
 
   // ---------- events ----------
+  try { document.execCommand('defaultParagraphSeparator', false, 'p'); } catch { /* unsupported */ }
+  // text typed straight into the editor gets a paragraph, so markdown shortcuts and the block menu have a block to work on
+  ed.addEventListener('beforeinput', (e) => {
+    if (e.inputType !== 'insertText' && e.inputType !== 'insertParagraph' && e.inputType !== 'insertCompositionText') return;
+    const n = sel().anchorNode; if (n && (n === ed || (n.parentNode === ed && n.nodeType === 3))) document.execCommand('formatBlock', false, 'p');
+  });
   ed.addEventListener('input', (e) => {
     if (e.inputType === 'insertText' && e.data && /[*_`~]/.test(e.data)) inlineShortcut();
     sync(); updateSlash(); keepCentered();
