@@ -23,5 +23,6 @@ export const SMART = [
   { id: 'untagged', label: 'Untagged', icon: 'tag', test: (n) => !(n.tags || []).length },
   { id: 'pdf', label: 'Has PDF', icon: 'file', test: (n) => (n.pages || []).some((p) => p.type === 'pdf') },
   { id: 'audio', label: 'Has audio', icon: 'mic', test: (n) => (n.recordings || []).length > 0 },
+  { id: 'unfiled', label: 'Unfiled', icon: 'folder', test: (n) => !n.notebookId },
   { id: 'locked', label: 'Locked', icon: 'lock', test: (n) => !!n.lock },
 ];

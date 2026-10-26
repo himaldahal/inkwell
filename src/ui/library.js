@@ -111,7 +111,7 @@ export function createLibrary() {
     viewBtn.title = viewBtn.getAttribute('aria-label');
     titleEl.textContent = titleFor();
     const crumbs = route.name === 'notebook' && !query ? A.notebookPath(nbs, route.params.id) : '';
-    const home = route.name === 'all' && !query;
+    const home = route.name === 'all' && !query; head.classList.toggle('home', home);
     subEl.textContent = home ? new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' }) + ' · ' + plural(notes.length, 'note') : query ? plural(notes.length, 'result') : (crumbs && crumbs !== titleFor() ? crumbs + ' - ' : '') + plural(notes.length, 'note');
     head.replaceChildren(
       h('button', { class: 'icon-btn sb-toggle', type: 'button', 'aria-label': 'Show sidebar', title: 'Show sidebar', onclick: () => { updateSettings({ sidebarCollapsed: false }); document.documentElement.classList.remove('sb-collapsed'); } }, icon('sidebar', 20)),
@@ -248,21 +248,40 @@ export function createLibrary() {
     const left = n.trashedAt ? h('span', { class: 'days-badge' + (A.trashDaysLeft(n) <= 3 ? ' soon' : '') }, A.trashDaysLeft(n) + 'd') : null;
     if (left) thumb.append(left);
     const meta = n.trashedAt ? `${A.trashDaysLeft(n)} days left` : (n.archived ? 'Archived - ' : '') + fmtDate(n.updatedAt) + (nb && route.name !== 'notebook' ? ' - ' + nb.name : '');
+    const nbChip = nb && route.name !== 'notebook' && !n.trashedAt ? h('span', { class: 'nb-chip', style: { background: (nb.color || '#4f46e5') + '26', color: nb.color || '#4f46e5' } }, nb.name) : null;
     const card = h('article', { class: 'card', role: 'listitem', tabindex: '0', draggable: 'true', 'data-id': n.id, 'aria-label': (n.title || 'Untitled') + ', ' + meta },
       thumb,
       h('div', { class: 'card-body' },
         h('div', { class: 'card-title' }, h('span', { class: 'ellipsis' }, n.title || 'Untitled'), badges),
-        snippet(n), h('div', { class: 'card-meta' }, meta), shareRow,
+        snippet(n), h('div', { class: 'card-meta' }, n.trashedAt ? meta : (n.archived ? 'Archived - ' : '') + fmtDate(n.updatedAt)), nbChip, shareRow,
         (n.tags || []).length ? h('div', { class: 'card-tags' }, n.tags.slice(0, 3).map((t) => h('span', { class: 'chip' }, '#' + t))) : null),
       h('button', { class: 'row-more card-more', type: 'button', 'aria-label': 'Note actions', tabindex: '-1', 'data-more': '1' }, icon('more', 18)));
     return card;
   }
   const go = (n) => navigate('/note/' + encodeURIComponent(n.id));
+  const QUOTES = [
+    ['The secret of getting ahead is getting started.', 'Mark Twain'], ['Well begun is half done.', 'Aristotle'], ['A journey of a thousand miles begins with a single step.', 'Lao Tzu'],
+    ['Do not wait to strike till the iron is hot; but make it hot by striking.', 'W. B. Yeats'], ['Well done is better than well said.', 'Benjamin Franklin'],
+    ['An investment in knowledge pays the best interest.', 'Benjamin Franklin'], ['The expert in anything was once a beginner.', 'Helen Hayes'],
+    ['Small deeds done are better than great deeds planned.', 'Peter Marshall'], ['Genius is one percent inspiration and ninety-nine percent perspiration.', 'Thomas Edison'],
+    ['Education is the most powerful weapon which you can use to change the world.', 'Nelson Mandela'], ['Knowing is not enough; we must apply.', 'Goethe'],
+    ['It always seems impossible until it is done.', 'Nelson Mandela'], ['Do what you can, with what you have, where you are.', 'Theodore Roosevelt'], ['No pressure, no diamonds.', 'Thomas Carlyle'],
+  ];
+  /** centred welcome: mark, greeting, a quote for the day */
+  function hero() {
+    const q = QUOTES[Math.floor(Date.now() / 864e5) % QUOTES.length];
+    return h('div', { class: 'hero' }, h('div', { class: 'hero-ic' }, icon('edit', 34)), h('h1', { class: 'hero-h' }, notes.length ? greeting() : "Let's get started"), h('p', { class: 'hero-q' }, '\u201C' + q[0] + '\u201D', h('span', {}, ' \u2014 ' + q[1])));
+  }
+  /** All notes / Recent / Favorites / Unfiled */
+  function tabsBar() {
+    const items = [['All notes', '/', route.name === 'all'], ['Recent', '/recent', route.name === 'recent'], ['Favorites', '/favorites', route.name === 'favorites'], ['Unfiled', '/smart/unfiled', route.name === 'smart' && route.params.id === 'unfiled']];
+    return h('div', { class: 'lib-tabs', role: 'tablist', 'aria-label': 'Note lists' }, items.map(([l, p, on]) => h('a', { class: 'lib-tab' + (on ? ' on' : ''), role: 'tab', 'aria-selected': String(on), href: href(p) }, l)));
+  }
   /** one-tap ways to start writing, straight from the dashboard */
   function quickStart() {
     const defTpl = getSettings().defaultTemplate || 'lined';
-    const card = (ic, title, text, fn, cls = '') => h('button', { class: 'qs-card ' + cls, type: 'button', onclick: fn }, h('span', { class: 'qs-ic' }, icon(ic, 22)), h('span', { class: 'qs-t' }, h('b', {}, title), h('small', {}, text)));
-    return h('div', { class: 'qs', role: 'group', 'aria-label': 'Start writing' },
+    const card = (ic, title, text, fn, cls = '') => h('button', { class: 'qs-card ' + cls, type: 'button', title: text, onclick: fn }, h('span', { class: 'qs-ic' }, icon(ic, 24)), h('span', { class: 'qs-t' }, h('b', {}, title), h('small', {}, text)));
+    return h('div', { class: 'qs act-grid', role: 'group', 'aria-label': 'Start writing' },
       card('plus', 'New note', 'Pick paper and layout', () => newNoteDialog({ notebookId: curNb() }), 'primary'),
       card('list', 'Seamless', 'One endless sheet', async () => go(await A.createNote({ layout: 'seamless', template: defTpl, notebookId: curNb() }))),
       card('focus', 'Free canvas', 'Board without edges', async () => go(await A.createNote({ layout: 'canvas', canvas: true, template: 'dot', notebookId: curNb() }))),
@@ -305,10 +324,11 @@ export function createLibrary() {
           h('button', { class: 'btn sm danger', type: 'button', onclick: async () => { if (await confirmDialog({ title: `Delete "${nb.name}" forever?`, message: 'Its notes are deleted too.', confirmLabel: 'Delete', danger: true })) { await A.purgeNotebook(nb.id); toast('Deleted'); } } }, 'Delete'));
       })));
     }
+    if ((route.name === 'recent' || route.name === 'favorites' || (route.name === 'smart' && route.params.id === 'unfiled')) && !query) top.append(tabsBar());
     if (route.name === 'all' && !query && loaded) {
       A.computeStats().then((st) => {
         if (route.name !== 'all' || query) return;
-        top.append(quickStart());
+        top.append(hero(), quickStart());
         top.append(h('div', { class: 'stats', 'aria-label': 'Your activity' },
           h('div', { class: 'stat' }, h('span', { class: 'stat-ic flame' }, icon('flame', 18)), h('div', {}, h('b', {}, st.streak), h('small', {}, st.streak === 1 ? 'day streak' : 'day streak'))),
           h('div', { class: 'stat' }, h('span', { class: 'stat-ic' }, icon('file', 18)), h('div', {}, h('b', {}, st.notes), h('small', {}, 'notes'))),
@@ -324,6 +344,7 @@ export function createLibrary() {
             i === 0 ? h('span', { class: 'first-tag' }, 'Last opened') : null, h('span', { class: 'ellipsis' }, n.title || 'Untitled'), h('small', {}, fmtDate(n.updatedAt)));
         }))));
         top.append(templateShelf()); const sj = subjectShelf(); if (sj) top.append(sj);
+        top.append(tabsBar());
         if (false && !getSettings().tipsDismissed && st.notes < 6) { // the quick-start cards above replace the first-run tips
           const tip = TIPS[st.notes % TIPS.length];
           top.append(h('div', { class: 'tip' }, icon('zap', 18), h('div', { class: 'grow' }, h('b', {}, tip[0]), h('span', {}, ' ' + tip[1])), iconBtn('x', 'Dismiss tips', () => { updateSettings({ tipsDismissed: true }); paintTop(); }, { size: 16, class: 'sm' })));
